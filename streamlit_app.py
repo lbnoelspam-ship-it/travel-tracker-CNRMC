@@ -18,9 +18,26 @@ st.set_page_config(
 st.title("✈️ Advanced AI Travel Estimator & Multi-Leg Tracker")
 st.markdown("Enter localized travel itineraries. Rates are driven dynamically by your uploaded `rates.csv` file.")
 
-# --- PERSISTENT DATA STORAGE ---
+# ─── PERSISTENT DATA STORAGE (CSV LEDGER) ─────────────────────────────
+
+LEDGER_FILE = "trip_ledger.csv"
+
+def load_ledger():
+    """Loads historical trips from the persistent CSV file."""
+    if os.path.exists(LEDGER_FILE):
+        try:
+            return pd.read_csv(LEDGER_FILE).to_dict('records')
+        except Exception:
+            return []
+    return []
+
+def save_ledger(data):
+    """Saves trips permanently to the CSV file."""
+    df = pd.DataFrame(data)
+    df.to_csv(LEDGER_FILE, index=False)
+
 if "trip_database" not in st.session_state:
-    st.session_state["trip_database"] = []
+    st.session_state["trip_database"] = load_ledger()
 if "num_legs" not in st.session_state:
     st.session_state["num_legs"] = 1
 
@@ -152,14 +169,13 @@ AIRPORT_MAP = {
     "Houston, Texas": "IAH", "Houston, TX": "IAH"
 }
 
-@st.cache_data(ttl=86400) # Cache limits API calls to save your free credits
+@st.cache_data(ttl=86400) 
 def fetch_live_airfare(origin_name, dest_name, flight_date):
     """Hits Google Flights via SerpApi. Falls back to None if fails."""
     try:
         api_key = st.secrets.get("SERPAPI_KEY")
         if not api_key: return None
         
-        # If user types a 3-letter code like "IAH", use it directly. Otherwise look it up.
         o_code = origin_name if len(origin_name) == 3 and origin_name.isupper() else AIRPORT_MAP.get(origin_name, "JFK")
         d_code = dest_name if len(dest_name) == 3 and dest_name.isupper() else AIRPORT_MAP.get(dest_name, "JFK")
         
@@ -332,7 +348,7 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
         {"Category": "Miscellaneous", "Estimated Cost": round(total_misc_cost, 2), "Details": "Aggregated fuel allocations, baggage costs, and local transport"}
     ])
     
-    edited_df = st.data_editor(
+    st.data_editor(
         ledger_df,
         num_rows="fixed",
         column_config={
@@ -343,14 +359,14 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
         use_container_width=True,
     )
     
-    final_calculated_sum = edited_df["Estimated Cost"].sum()
+    final_calculated_sum = ledger_df["Estimated Cost"].sum()
     
     st.markdown("#### 📋 Comprehensive Per Diem & Lodging Rates Reference Table")
     st.table(pd.DataFrame(breakdown_table_rows)) 
         
     st.markdown(f"### **Total Multi-Leg Projected Budget:** ${final_calculated_sum:,.2f}")
     
-    if st.button("💾 Commit & Log Trip to Database Ledger"):
+    if st.button("💾 Commit & Log Trip to Persistent Ledger"):
         comma_locations = ", ".join([l["name"] for l in legs_data])
         new_entry = {
             "Month": global_start.strftime("%B %Y"),
@@ -360,19 +376,40 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
             "Cost": round(final_calculated_sum, 2)
         }
         st.session_state["trip_database"].append(new_entry)
-        st.success("Itinerary compiled into historical database tracker.")
+        save_ledger(st.session_state["trip_database"]) # Hard saves to CSV
+        st.success("Itinerary permanently saved to trip_ledger.csv!")
         st.rerun()
 
 # ─── MASTER CONSOLIDATED ACCUMULATOR LEDGER ───────────────────────────
 
 st.markdown("---")
-st.subheader("📊 Centralized Travel Tracker Archive (Aggregated Ledger)")
+st.subheader("📊 Centralized Travel Tracker Archive")
 
 if st.session_state["trip_database"]:
-    raw_db_df = pd.DataFrame(st.session_state["trip_database"])
-    aggregated_df = raw_db_df.groupby(["Month", "Traveler", "Location", "Dates"], as_index=False)["Cost"].sum()
-    st.dataframe(aggregated_df, use_container_width=True)
+    st.info("💡 **Interactive Ledger:** To delete a trip, check the empty box on the far left of the row, then press the `Delete` key on your keyboard (or use the trash can icon). You must click **Save Changes** below to make deletions permanent.")
     
-    if st.button("❌ Flush Database Records"):
-        st.session_state["trip_database"] = []
-        st.rerun()
+    raw_db_df = pd.DataFrame(st.session_state["trip_database"])
+    
+    edited_archive = st.data_editor(
+        raw_db_df,
+        num_rows="dynamic", # Enables Row Deletion and Adding!
+        use_container_width=True,
+        key="archive_editor"
+    )
+    
+    col1, col2 = st.columns([2, 8])
+    with col1:
+        if st.button("💾 Save Archive Changes"):
+            # Update session state and push to the permanent CSV
+            st.session_state["trip_database"] = edited_archive.dropna(how="all").to_dict('records')
+            save_ledger(st.session_state["trip_database"])
+            st.success("Archive updated successfully!")
+            st.rerun()
+    with col2:
+        if st.button("❌ Wipe Entire Database"):
+            st.session_state["trip_database"] = []
+            if os.path.exists(LEDGER_FILE):
+                os.remove(LEDGER_FILE)
+            st.rerun()
+else:
+    st.caption("No records currently established inside the historical spreadsheet log.")
