@@ -45,7 +45,9 @@ if "num_legs" not in st.session_state:
 
 @st.cache_data
 def load_rates(uploaded_file=None):
+    """Aggressively hunts for the CSV file, or accepts a direct manual upload."""
     df = None
+    
     if uploaded_file is not None:
         try:
             df = pd.read_csv(uploaded_file)
@@ -60,6 +62,7 @@ def load_rates(uploaded_file=None):
             "rates.csv",
             "Rates.csv"
         ]
+        
         for path in possible_paths:
             if os.path.exists(path):
                 try:
@@ -83,12 +86,15 @@ def load_rates(uploaded_file=None):
         except Exception as e:
             st.error(f"⚠️ **Data Format Error:** Your CSV is missing required columns. {e}")
             return None
+            
     return None 
 
 FEDERAL_RATES_DB = load_rates()
 
 if not FEDERAL_RATES_DB:
     st.warning("⚠️ **Server Sync Issue:** Streamlit cannot find `rates.csv` in the cloud directory.")
+    st.info("💡 **Quick Fix:** Drag and drop your `rates.csv` file below to keep working immediately.")
+    
     manual_upload = st.file_uploader("Upload rates.csv here", type=['csv'])
     if manual_upload:
         FEDERAL_RATES_DB = load_rates(manual_upload)
@@ -104,12 +110,14 @@ LOCATIONS_LIST = sorted(list(FEDERAL_RATES_DB.keys()))
 # ─── MATH, GEO, AND LIVE API UTILITIES ────────────────────────────────
 
 def clean_to_english_ascii(text: str) -> str:
+    """Removes non-English character scripts to ensure plain English strings."""
     ascii_clean = text.encode("ascii", errors="ignore").decode("ascii")
     ascii_clean = re.sub(r',\s*,', ',', ascii_clean)
     return ascii_clean.strip().strip(",")
 
 @st.cache_data(ttl=86400)
 def get_coordinates(location_query: str):
+    """Fetches lat/lon and foreign status via OpenStreetMap for flight math."""
     if not location_query or len(location_query.strip()) < 3:
         return None
     try:
@@ -118,14 +126,18 @@ def get_coordinates(location_query: str):
         req = urllib.request.Request(url, headers={'User-Agent': 'AITravelEstimatorProject/1.3'})
         with urllib.request.urlopen(req) as response:
             data = json.loads(response.read())
+            
         if not data:
             return None
+            
         top_match = data[0]
         address = top_match.get("address", {})
+        
         city = address.get("city") or address.get("town") or address.get("suburb") or location_query.split(",")[0]
         state = address.get("state", "")
         country = address.get("country", "United States")
         country_code = address.get("country_code", "us").upper()
+        
         display_name = f"{city}, {state}" if state and country_code == "US" else f"{city}, {country}"
         
         return {
@@ -135,7 +147,11 @@ def get_coordinates(location_query: str):
             "is_foreign": country_code != "US"
         }
     except Exception:
-        return {"clean_name": clean_to_english_ascii(location_query.title()), "lat": 38.89, "lon": -77.03, "is_foreign": False}
+        return {
+            "clean_name": clean_to_english_ascii(location_query.title()),
+            "lat": 38.89, "lon": -77.03, 
+            "is_foreign": False
+        }
 
 def haversine_miles(lat1, lon1, lat2, lon2):
     r = 3956 
@@ -145,14 +161,15 @@ def haversine_miles(lat1, lon1, lat2, lon2):
     return round(2 * r * math.asin(math.sqrt(a)), 1)
 
 def calculate_tiered_flight_cost(distance, is_foreign):
+    """Mimics real-world airline pricing using economies of scale."""
     if not is_foreign:
-        if distance < 400: return 150.0 + (distance * 0.20)
-        elif distance < 1500: return 200.0 + (distance * 0.12)
-        else: return 250.0 + (distance * 0.08)
+        if distance < 400:     return 150.0 + (distance * 0.20)  
+        elif distance < 1500:  return 200.0 + (distance * 0.12)  
+        else:                  return 250.0 + (distance * 0.08)  
     else:
-        if distance < 1000: return 250.0 + (distance * 0.15)
-        elif distance < 4000: return 400.0 + (distance * 0.08)
-        else: return 600.0 + (distance * 0.04)
+        if distance < 1000:    return 250.0 + (distance * 0.15)  
+        elif distance < 4000:  return 400.0 + (distance * 0.08)  
+        else:                  return 600.0 + (distance * 0.04)  
 
 # IATA Mapping for Federal/Navy locations to Commercial Airports
 AIRPORT_MAP = {
@@ -198,11 +215,12 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
 with st.sidebar:
     st.header("1. Core Metadata")
     traveler_name = st.text_input("Traveler Name", placeholder="e.g. Larry")
-    purpose_input = st.text_input("Purpose of Trip", max_chars=64, placeholder="e.g. System Integration Assessment")
+    purpose_input = st.text_input("Purpose of Trip (Max 64 Characters)", max_chars=64, placeholder="e.g. System Integration Assessment")
     
     st.markdown("---")
     st.header("2. Base Departure Origin")
-    origin_input = st.text_input("Starting Location (City or 3-Letter IATA)", value="Houston, TX")
+    
+    origin_input = st.text_input("Starting Location", value="Houston, TX")
     origin_geo = get_coordinates(origin_input)
     if origin_geo:
         st.caption(f"✔️ Origin locked: {origin_geo['clean_name']}")
@@ -242,7 +260,11 @@ for i in range(st.session_state["num_legs"]):
         
     if FEDERAL_RATES_DB:
         raw_legs_inputs.append({
-            "index": i, "name": leg_name, "data": FEDERAL_RATES_DB[leg_name], "start": leg_start, "end": leg_end
+            "index": i,
+            "name": leg_name,
+            "data": FEDERAL_RATES_DB[leg_name],
+            "start": leg_start,
+            "end": leg_end
         })
 
 legs_data = []
@@ -254,8 +276,12 @@ for idx, leg in enumerate(raw_legs_inputs):
     if idx > 0:
         prior_end_date = raw_legs_inputs[idx-1]["end"]
         expected_start_date = prior_end_date + timedelta(days=1)
-        if leg["start"] < expected_start_date or leg["start"] > expected_start_date:
-            st.error(f"❌ **Timeline Error on Leg #{idx+1}:** Must start exactly on **{expected_start_date.strftime('%B %d, %Y')}**.")
+        
+        if leg["start"] < expected_start_date:
+            st.error(f"❌ **Timeline Overlap Error on Leg #{idx+1}:** Must start exactly on **{expected_start_date.strftime('%B %d, %Y')}**.")
+            date_sequencing_valid = False
+        elif leg["start"] > expected_start_date:
+            st.error(f"❌ **Timeline Gap Error on Leg #{idx+1}:** Must start exactly on **{expected_start_date.strftime('%B %d, %Y')}**.")
             date_sequencing_valid = False
 
     leg_geo = get_coordinates(leg["name"])
@@ -263,10 +289,17 @@ for idx, leg in enumerate(raw_legs_inputs):
         leg_geo = {"lat": 0.0, "lon": 0.0, "is_foreign": "GSA" not in leg["data"]["authority"]}
 
     legs_data.append({
-        "index": leg["index"], "name": leg["name"], "lodging_rate": leg["data"]["lodging"],
-        "mie_rate": leg["data"]["mie"], "authority": leg["data"]["authority"],
-        "lat": leg_geo["lat"], "lon": leg_geo["lon"], "is_foreign": leg_geo["is_foreign"],
-        "start": leg["start"], "end": leg["end"], "days": (leg["end"] - leg["start"]).days + 1
+        "index": leg["index"],
+        "name": leg["name"],
+        "lodging_rate": leg["data"]["lodging"],
+        "mie_rate": leg["data"]["mie"],
+        "authority": leg["data"]["authority"],
+        "lat": leg_geo["lat"],
+        "lon": leg_geo["lon"],
+        "is_foreign": leg_geo["is_foreign"],
+        "start": leg["start"],
+        "end": leg["end"],
+        "days": (leg["end"] - leg["start"]).days + 1
     })
 
 # ─── FINANCIAL CALCULATIONS AND COMPILATION ───────────────────────────
@@ -275,6 +308,7 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
     st.markdown("---")
     st.subheader("📊 Dynamic Budget Analysis")
     
+    # Flight Chaining Matrix
     flight_chain = [{"name": origin_geo["clean_name"], "lat": origin_geo["lat"], "lon": origin_geo["lon"], "is_foreign": origin_geo["is_foreign"], "start": date.today()}]
     for leg in legs_data:
         flight_chain.append(leg)
@@ -289,12 +323,11 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
         dist = haversine_miles(p1["lat"], p1["lon"], p2["lat"], p2["lon"])
         
         flight_date = p2["start"] if idx > 0 else legs_data[0]["start"]
-        
         live_price = fetch_live_airfare(p1["name"], p2["name"], flight_date)
         
         if live_price is not None:
             total_airfare_cost += live_price
-            airfare_log.append(f"Live Google Flights Data: ${live_price:,.2f}")
+            airfare_log.append(f"Live API Data: ${live_price:,.2f}")
         else:
             is_intl_leg = p2.get("is_foreign", False) or p1.get("is_foreign", False)
             leg_flight_cost = calculate_tiered_flight_cost(dist, is_intl_leg)
@@ -337,7 +370,8 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
             "Lodging Limit / Night": f"${leg_lodging_rate:,.2f}",
             "First/Last Day Per Diem": f"${leg_mie_rate * 0.75:,.2f}",
             "Middle Day Per Diem": f"${leg_mie_rate:,.2f}",
-            "Subtotal Days": f"{leg_nights} Nights / {leg['days']} Days"
+            "Subtotal Days": f"{leg_nights} Nights / {leg['days']} Days",
+            "Governing Authority": leg["authority"]
         })
 
     ledger_df = pd.DataFrame([
@@ -348,7 +382,7 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
         {"Category": "Miscellaneous", "Estimated Cost": round(total_misc_cost, 2), "Details": "Aggregated fuel allocations, baggage costs, and local transport"}
     ])
     
-    st.data_editor(
+    edited_df = st.data_editor(
         ledger_df,
         num_rows="fixed",
         column_config={
@@ -359,7 +393,7 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
         use_container_width=True,
     )
     
-    final_calculated_sum = ledger_df["Estimated Cost"].sum()
+    final_calculated_sum = edited_df["Estimated Cost"].sum()
     
     st.markdown("#### 📋 Comprehensive Per Diem & Lodging Rates Reference Table")
     st.table(pd.DataFrame(breakdown_table_rows)) 
@@ -376,7 +410,7 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
             "Cost": round(final_calculated_sum, 2)
         }
         st.session_state["trip_database"].append(new_entry)
-        save_ledger(st.session_state["trip_database"]) # Hard saves to CSV
+        save_ledger(st.session_state["trip_database"])
         st.success("Itinerary permanently saved to trip_ledger.csv!")
         st.rerun()
 
@@ -386,24 +420,35 @@ st.markdown("---")
 st.subheader("📊 Centralized Travel Tracker Archive")
 
 if st.session_state["trip_database"]:
-    st.info("💡 **Interactive Ledger:** To delete a trip, check the empty box on the far left of the row, then press the `Delete` key on your keyboard (or use the trash can icon). You must click **Save Changes** below to make deletions permanent.")
+    st.info("💡 **Interactive Ledger:** Trips with identical Months, Travelers, Locations, and Dates are automatically paired and summed. Delete rows by checking the box on the left and pressing 'Delete'.")
     
-    raw_db_df = pd.DataFrame(st.session_state["trip_database"])
+    df = pd.DataFrame(st.session_state["trip_database"])
+    
+    # PAIRING/MERGING LOGIC
+    merged_df = df.groupby(['Month', 'Traveler', 'Location', 'Dates'], as_index=False)['Cost'].sum()
     
     edited_archive = st.data_editor(
-        raw_db_df,
-        num_rows="dynamic", # Enables Row Deletion and Adding!
+        merged_df,
+        num_rows="dynamic",
         use_container_width=True,
         key="archive_editor"
+    )
+    
+    # EXPORT LOGIC
+    csv = edited_archive.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Export Ledger to Spreadsheet (CSV)",
+        data=csv,
+        file_name='travel_ledger_export.csv',
+        mime='text/csv',
     )
     
     col1, col2 = st.columns([2, 8])
     with col1:
         if st.button("💾 Save Archive Changes"):
-            # Update session state and push to the permanent CSV
             st.session_state["trip_database"] = edited_archive.dropna(how="all").to_dict('records')
             save_ledger(st.session_state["trip_database"])
-            st.success("Archive updated successfully!")
+            st.success("Archive updated & synced!")
             st.rerun()
     with col2:
         if st.button("❌ Wipe Entire Database"):
@@ -412,4 +457,4 @@ if st.session_state["trip_database"]:
                 os.remove(LEDGER_FILE)
             st.rerun()
 else:
-    st.caption("No records currently established inside the historical spreadsheet log.")
+    st.caption("No records currently established inside the historical ledger.")
