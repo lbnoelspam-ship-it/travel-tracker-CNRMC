@@ -287,4 +287,80 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
         leg_nights = leg["days"] - 1 if idx == (len(legs_data) - 1) else leg["days"]
         total_lodging_cost += (leg_nights * leg_lodging_rate)
         total_rental_cost += (leg["days"] * leg_car_rate)
-        total_misc_cost += (140.0 if leg["is_foreign"] else 90.0) + (15.0 * leg["
+        total_misc_cost += (140.0 if leg["is_foreign"] else 90.0) + (15.0 * leg["days"])
+        
+        leg_pd_sum = 0.0
+        
+        for day_offset in range(leg["days"]):
+            current_day = leg["start"] + timedelta(days=day_offset)
+            if current_day == global_start or current_day == global_end:
+                leg_pd_sum += (leg_mie_rate * 0.75)
+            else:
+                leg_pd_sum += leg_mie_rate
+                
+        total_per_diem_cost += leg_pd_sum
+        
+        breakdown_table_rows.append({
+            "Travel Segment": f"Leg #{idx+1}: {leg['name']}",
+            "Lodging Limit / Night": f"${leg_lodging_rate:,.2f}",
+            "First/Last Day Per Diem": f"${leg_mie_rate * 0.75:,.2f}",
+            "Middle Day Per Diem": f"${leg_mie_rate:,.2f}",
+            "Subtotal Days": f"{leg_nights} Nights / {leg['days']} Days",
+            "Governing Authority": leg["authority"]
+        })
+
+    ledger_df = pd.DataFrame([
+        {"Category": "Airfare", "Estimated Cost": round(total_airfare_cost, 2), "Details": "Tiered flight cost calculation based on flight distance and routing"},
+        {"Category": "Lodging", "Estimated Cost": round(total_lodging_cost, 2), "Details": "Sum of combined multi-leg lodging limits across dates"},
+        {"Category": "Economy Rental Vehicle", "Estimated Cost": round(total_rental_cost, 2), "Details": "Rental vehicles computed across active itinerary windows"},
+        {"Category": "Per Diem (M&IE)", "Estimated Cost": round(total_per_diem_cost, 2), "Details": "Calculated via strict limits specified in rates.csv"},
+        {"Category": "Miscellaneous", "Estimated Cost": round(total_misc_cost, 2), "Details": "Aggregated fuel allocations, baggage costs, and local transport"}
+    ])
+    
+    edited_df = st.data_editor(
+        ledger_df,
+        num_rows="fixed",
+        column_config={
+            "Category": st.column_config.TextColumn("Category", disabled=True),
+            "Estimated Cost": st.column_config.NumberColumn("Estimated Cost", min_value=0.0, format="$%.2f"),
+            "Details": st.column_config.TextColumn("Details", disabled=True),
+        },
+        use_container_width=True,
+    )
+    
+    final_calculated_sum = edited_df["Estimated Cost"].sum()
+    
+    st.markdown("#### 📋 Comprehensive Per Diem & Lodging Rates Reference Table")
+    audit_rates_df = pd.DataFrame(breakdown_table_rows)
+    st.table(audit_rates_df) 
+        
+    st.markdown(f"### **Total Multi-Leg Projected Budget:** ${final_calculated_sum:,.2f}")
+    
+    if st.button("💾 Commit & Log Trip to Database Ledger"):
+        comma_locations = ", ".join([l["name"] for l in legs_data])
+        new_entry = {
+            "Month": global_start.strftime("%B %Y"),
+            "Traveler": traveler_name if traveler_name.strip() else "Unknown Traveler",
+            "Location": comma_locations,
+            "Dates": f"{global_start.strftime('%m/%d')} - {global_end.strftime('%m/%d/%y')}",
+            "Cost": round(final_calculated_sum, 2)
+        }
+        st.session_state["trip_database"].append(new_entry)
+        st.success("Itinerary compiled into historical database tracker.")
+        st.rerun()
+
+# ─── MASTER CONSOLIDATED ACCUMULATOR LEDGER ───────────────────────────
+
+st.markdown("---")
+st.subheader("📊 Centralized Travel Tracker Archive (Aggregated Ledger)")
+
+if st.session_state["trip_database"]:
+    raw_db_df = pd.DataFrame(st.session_state["trip_database"])
+    aggregated_df = raw_db_df.groupby(["Month", "Traveler", "Location", "Dates"], as_index=False)["Cost"].sum()
+    st.dataframe(aggregated_df, use_container_width=True)
+    
+    if st.button("❌ Flush Database Records"):
+        st.session_state["trip_database"] = []
+        st.rerun()
+else:
+    st.caption("No records currently established inside the historical spreadsheet log.")
