@@ -308,7 +308,6 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
     st.markdown("---")
     st.subheader("📊 Dynamic Budget Analysis")
     
-    # Flight Chaining Matrix
     flight_chain = [{"name": origin_geo["clean_name"], "lat": origin_geo["lat"], "lon": origin_geo["lon"], "is_foreign": origin_geo["is_foreign"], "start": date.today()}]
     for leg in legs_data:
         flight_chain.append(leg)
@@ -402,9 +401,13 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
     
     if st.button("💾 Commit & Log Trip to Persistent Ledger"):
         comma_locations = ", ".join([l["name"] for l in legs_data])
+        
+        # NOTE: .strip() has been added here to eliminate ghost spaces!
+        safe_traveler = traveler_name.strip() if traveler_name.strip() else "Unknown Traveler"
+        
         new_entry = {
             "Month": global_start.strftime("%B %Y"),
-            "Traveler": traveler_name if traveler_name.strip() else "Unknown Traveler",
+            "Traveler": safe_traveler,
             "Location": comma_locations,
             "Dates": f"{global_start.strftime('%m/%d')} - {global_end.strftime('%m/%d/%y')}",
             "Cost": round(final_calculated_sum, 2)
