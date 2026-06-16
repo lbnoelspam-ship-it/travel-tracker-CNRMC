@@ -254,12 +254,26 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
     
     total_airfare_cost = 0.0
     
+   def calculate_tiered_flight_cost(distance, is_foreign):
+        """Mimics real-world airline pricing using economies of scale."""
+        if not is_foreign:
+            if distance < 400:     return 150.0 + (distance * 0.20)  # Short regional hop
+            elif distance < 1500:  return 200.0 + (distance * 0.12)  # Mid-con
+            else:                  return 250.0 + (distance * 0.08)  # Cross-country
+        else:
+            if distance < 1000:    return 250.0 + (distance * 0.15)  # Near international
+            elif distance < 4000:  return 400.0 + (distance * 0.08)  # Mid international (e.g., Europe to East Coast)
+            else:                  return 600.0 + (distance * 0.04)  # Long-haul (e.g., Asia/Pacific)
+
     for idx in range(len(flight_chain) - 1):
         p1 = flight_chain[idx]
         p2 = flight_chain[idx+1]
         dist = haversine_miles(p1["lat"], p1["lon"], p2["lat"], p2["lon"])
-        cost_per_mile = 0.32 if p2.get("is_foreign", False) or p1.get("is_foreign", False) else 0.18
-        leg_flight_cost = 180.0 + (dist * cost_per_mile)
+        
+        # Determine if this specific leg crosses international borders
+        is_intl_leg = p2.get("is_foreign", False) or p1.get("is_foreign", False)
+        
+        leg_flight_cost = calculate_tiered_flight_cost(dist, is_intl_leg)
         total_airfare_cost += leg_flight_cost
 
     total_lodging_cost = 0.0
