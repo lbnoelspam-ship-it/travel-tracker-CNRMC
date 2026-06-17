@@ -118,34 +118,40 @@ def clean_to_english_ascii(text: str) -> str:
     ascii_clean = re.sub(r',\s*,', ',', ascii_clean)
     return ascii_clean.strip().strip(",")
 
-@st.cache_data(ttl=86400)
-def get_coordinates(location_query: str):
-    if not location_query or len(location_query.strip()) < 3:
-        return None
+@st.cache_data(ttl=86400) 
+def fetch_live_airfare(origin_name, dest_name, flight_date):
     try:
-        safe_query = urllib.parse.quote(location_query.strip())
-        url = f"https://nominatim.openstreetmap.org/search?q={safe_query}&format=json&addressdetails=1&limit=1"
-        req = urllib.request.Request(url, headers={'User-Agent': 'AITravelEstimatorProject/1.3'})
-        with urllib.request.urlopen(req) as response:
-            data = json.loads(response.read())
-        if not data:
+        api_key = st.secrets.get("SERPAPI_KEY")
+        if not api_key: 
+            st.toast("⚠️ ERROR: No API Key found in Streamlit Secrets!")
             return None
-        top_match = data[0]
-        address = top_match.get("address", {})
-        city = address.get("city") or address.get("town") or address.get("suburb") or location_query.split(",")[0]
-        state = address.get("state", "")
-        country = address.get("country", "United States")
-        country_code = address.get("country_code", "us").upper()
-        display_name = f"{city}, {state}" if state and country_code == "US" else f"{city}, {country}"
         
-        return {
-            "clean_name": clean_to_english_ascii(display_name),
-            "lat": float(top_match["lat"]),
-            "lon": float(top_match["lon"]),
-            "is_foreign": country_code != "US"
-        }
-    except Exception:
-        return {"clean_name": clean_to_english_ascii(location_query.title()), "lat": 38.89, "lon": -77.03, "is_foreign": False}
+        o_code = origin_name if len(origin_name) == 3 and origin_name.isupper() else AIRPORT_MAP.get(origin_name, "JFK")
+        d_code = dest_name if len(dest_name) == 3 and dest_name.isupper() else AIRPORT_MAP.get(dest_name, "JFK")
+        
+        date_str = flight_date.strftime("%Y-%m-%d") if isinstance(flight_date, date) else flight_date[:10]
+        url = f"https://serpapi.com/search.json?engine=google_flights&departure_id={o_code}&arrival_id={d_code}&outbound_date={date_str}&currency=USD&hl=en&api_key={api_key}"
+        
+        res = requests.get(url)
+        data = res.json()
+        
+        # If SerpApi sends an error back, pop it up on the screen!
+        if "error" in data:
+            st.toast(f"🛑 SerpApi Error: {data['error']}")
+            return None
+        
+        if "best_flights" in data and len(data["best_flights"]) > 0:
+            return float(data["best_flights"][0]["price"])
+        elif "other_flights" in data and len(data["other_flights"]) > 0:
+            return float(data["other_flights"][0]["price"])
+        else:
+            st.toast(f"🤷‍♂️ Google found no flights for {o_code} to {d_code} on {date_str}.")
+            return None
+            
+    except Exception as e:
+        st.toast(f"💥 Code Error: {e}")
+        pass
+    return None
 
 def haversine_miles(lat1, lon1, lat2, lon2):
     r = 3956 
@@ -453,7 +459,7 @@ if st.session_state["trip_database"]:
                     color="Location", 
                     hover_data={"Cost": ":$,.2f", "Days": True, "Start_Date": False, "End_Date": False}
                 )
-                fig.update_yaxes(autorange="reversed") 
+                fig.update_traces(marker_cornerradius=12)
                 st.plotly_chart(fig, use_container_width=True)
                 
         except Exception as e:
