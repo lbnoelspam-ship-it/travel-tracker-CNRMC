@@ -194,7 +194,6 @@ def merge_overlapping_trips(records):
     if not records: return []
     df = pd.DataFrame(records)
     
-    # Ensure backwards compatibility with old ledger files
     required_cols = ['Month', 'Traveler', 'Location', 'Start_Date', 'End_Date', 'Dates', 'Days', 'Airfare', 'Per Diem', 'Lodging', 'Rental Car', 'Misc', 'Cost', 'Flight_Chain_JSON', 'Refresh Live Airfare']
     for col in required_cols:
         if col not in df.columns:
@@ -215,7 +214,6 @@ def merge_overlapping_trips(records):
         
         for i in range(1, len(group)):
             nxt = group.iloc[i].to_dict()
-            # If dates overlap or touch (<= 1 day gap), merge them!
             if nxt['Start_Date'] <= current['End_Date'] + pd.Timedelta(days=1):
                 current['End_Date'] = max(current['End_Date'], nxt['End_Date'])
                 current['Airfare'] += nxt.get('Airfare', 0)
@@ -351,6 +349,8 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
     global_start = min(l["start"] for l in legs_data)
     global_end = max(l["end"] for l in legs_data)
     
+    breakdown_table_rows = []
+    
     for idx, leg in enumerate(legs_data):
         total_days += leg["days"]
         leg_lodging_rate = leg["lodging_rate"]
@@ -367,13 +367,46 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
             if current_day == global_start or current_day == global_end: total_per_diem_cost += (leg_mie_rate * 0.75)
             else: total_per_diem_cost += leg_mie_rate
 
-    final_calculated_sum = total_airfare_cost + total_lodging_cost + total_rental_cost + total_per_diem_cost + total_misc_cost
+        breakdown_table_rows.append({
+            "Travel Segment": f"Leg #{idx+1}: {leg['name']}",
+            "Lodging Limit / Night": f"${leg_lodging_rate:,.2f}",
+            "First/Last Day Per Diem": f"${leg_mie_rate * 0.75:,.2f}",
+            "Middle Day Per Diem": f"${leg_mie_rate:,.2f}",
+            "Subtotal Days": f"{leg_nights} Nights / {leg['days']} Days",
+            "Governing Authority": leg["authority"]
+        })
+
+    # RESTORED ESTIMATOR BREAKOUT TABLE
+    ledger_df = pd.DataFrame([
+        {"Category": "Airfare", "Estimated Cost": round(total_airfare_cost, 2), "Details": " | ".join(airfare_log)},
+        {"Category": "Lodging", "Estimated Cost": round(total_lodging_cost, 2), "Details": "Sum of combined multi-leg lodging limits across dates"},
+        {"Category": "Economy Rental Vehicle", "Estimated Cost": round(total_rental_cost, 2), "Details": "Rental vehicles computed across active itinerary windows"},
+        {"Category": "Per Diem (M&IE)", "Estimated Cost": round(total_per_diem_cost, 2), "Details": "Calculated via strict limits specified in rates.csv"},
+        {"Category": "Miscellaneous", "Estimated Cost": round(total_misc_cost, 2), "Details": "Aggregated fuel allocations, baggage costs, and local transport"}
+    ])
+    
+    edited_df = st.data_editor(
+        ledger_df,
+        num_rows="fixed",
+        column_config={
+            "Category": st.column_config.TextColumn("Category", disabled=True),
+            "Estimated Cost": st.column_config.NumberColumn("Estimated Cost", min_value=0.0, format="$%.2f"),
+            "Details": st.column_config.TextColumn("Details", disabled=True),
+        },
+        use_container_width=True,
+    )
+    
+    # Map back manually adjusted data editor values to save properly
+    costs_mapped = dict(zip(edited_df["Category"], edited_df["Estimated Cost"]))
+    final_calculated_sum = edited_df["Estimated Cost"].sum()
+    
+    st.markdown("#### 📋 Comprehensive Per Diem & Lodging Rates Reference Table")
+    st.table(pd.DataFrame(breakdown_table_rows)) 
+        
     st.markdown(f"### **Total Multi-Leg Projected Budget:** ${final_calculated_sum:,.2f}")
     
     if st.button("💾 Commit & Log Trip to Persistent Ledger"):
         safe_traveler = traveler_name.strip() if traveler_name.strip() else "Unknown Traveler"
-        
-        # Serialize the routing code so we can refresh it later
         flight_json = json.dumps([{"name": f["name"], "start": f["start"].isoformat() if isinstance(f["start"], date) else f["start"]} for f in flight_chain])
         
         new_entry = {
@@ -384,19 +417,17 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
             "End_Date": global_end.isoformat(),
             "Dates": f"{global_start.strftime('%m/%d')} - {global_end.strftime('%m/%d/%y')}",
             "Days": total_days,
-            "Airfare": round(total_airfare_cost, 2),
-            "Per Diem": round(total_per_diem_cost, 2),
-            "Lodging": round(total_lodging_cost, 2),
-            "Rental Car": round(total_rental_cost, 2),
-            "Misc": round(total_misc_cost, 2),
+            "Airfare": round(costs_mapped.get("Airfare", total_airfare_cost), 2),
+            "Per Diem": round(costs_mapped.get("Per Diem (M&IE)", total_per_diem_cost), 2),
+            "Lodging": round(costs_mapped.get("Lodging", total_lodging_cost), 2),
+            "Rental Car": round(costs_mapped.get("Economy Rental Vehicle", total_rental_cost), 2),
+            "Misc": round(costs_mapped.get("Miscellaneous", total_misc_cost), 2),
             "Cost": round(final_calculated_sum, 2),
             "Flight_Chain_JSON": flight_json,
             "Refresh Live Airfare": False
         }
         
         st.session_state["trip_database"].append(new_entry)
-        
-        # Run the overlap sweeper before saving!
         st.session_state["trip_database"] = merge_overlapping_trips(st.session_state["trip_database"])
         save_ledger(st.session_state["trip_database"])
         
@@ -413,7 +444,6 @@ if st.session_state["trip_database"]:
     
     df = pd.DataFrame(st.session_state["trip_database"])
     
-    # Hide technical backend columns from the user interface
     display_cols = ['Refresh Live Airfare', 'Month', 'Traveler', 'Location', 'Dates', 'Days', 'Airfare', 'Per Diem', 'Lodging', 'Rental Car', 'Misc', 'Cost']
     available_cols = [c for c in display_cols if c in df.columns]
     
@@ -424,19 +454,16 @@ if st.session_state["trip_database"]:
         key="archive_editor"
     )
     
-    # EXPORT LOGIC
     csv = edited_archive.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Export Ledger to Spreadsheet (CSV)", data=csv, file_name='travel_ledger_export.csv', mime='text/csv')
     
     col1, col2 = st.columns([2, 8])
     with col1:
         if st.button("💾 Save Archive Changes & Process Refreshes"):
-            updated_records = df.to_dict('records') # Get the full records with hidden columns
+            updated_records = df.to_dict('records')
             
-            # Apply edits and process airfare refreshes
             for idx, row in edited_archive.iterrows():
                 if idx < len(updated_records):
-                    # Check if the user requested an airfare refresh
                     if row.get('Refresh Live Airfare', False) and 'Flight_Chain_JSON' in updated_records[idx]:
                         st.toast(f"Fetching live airfare for {row['Traveler']}...")
                         try:
@@ -449,18 +476,15 @@ if st.session_state["trip_database"]:
                             
                             if new_airfare > 0:
                                 updated_records[idx]['Airfare'] = round(new_airfare, 2)
-                                # Recalculate total cost
                                 updated_records[idx]['Cost'] = sum([updated_records[idx][c] for c in ['Airfare', 'Per Diem', 'Lodging', 'Rental Car', 'Misc']])
                         except Exception:
                             pass
                     
-                    # Update all other visible columns based on user edits
                     for c in available_cols:
                         if c != 'Refresh Live Airfare':
                             updated_records[idx][c] = row[c]
-                    updated_records[idx]['Refresh Live Airfare'] = False # Reset the checkbox
+                    updated_records[idx]['Refresh Live Airfare'] = False
             
-            # Run the overlap sweeper one more time just to be safe
             st.session_state["trip_database"] = merge_overlapping_trips(updated_records)
             save_ledger(st.session_state["trip_database"])
             st.success("Archive updated & Airfares Refreshed!")
