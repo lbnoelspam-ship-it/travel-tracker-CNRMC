@@ -378,11 +378,12 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
             safe_traveler = traveler_name.strip() if traveler_name.strip() else "Unknown Traveler"
             flight_json = json.dumps([{"name": f["name"], "start": f["start"].isoformat() if isinstance(f["start"], date) else f["start"]} for f in flight_chain])
             
+            # --- CRITICAL FIX: Added Start_Date and End_Date back into the dictionary ---
             new_entry = {
                 "Month": global_start.strftime("%B %Y"),
                 "Traveler": safe_traveler,
                 "Location": ", ".join([l["name"] for l in legs_data]),
-                "Start_Date": global_start.isoformat(),
+                "Start_Date": global_start.isoformat(), 
                 "End_Date": global_end.isoformat(),
                 "Dates": f"{global_start.strftime('%m/%d')} - {global_end.strftime('%m/%d/%y')}",
                 "Days": total_days,
@@ -436,20 +437,25 @@ if st.session_state["trip_database"]:
         st.markdown("### Contractor Travel Schedule")
         try:
             plot_df = pd.DataFrame(st.session_state["trip_database"])
-            plot_df['Start_Date'] = pd.to_datetime(plot_df['Start_Date'])
-            plot_df['End_Date'] = pd.to_datetime(plot_df['End_Date'])
             
-            fig = px.timeline(
-                plot_df, 
-                x_start="Start_Date", 
-                x_end="End_Date", 
-                y="Traveler", 
-                color="Location", 
-                hover_data={"Cost": ":$,.2f", "Days": True, "Start_Date": False, "End_Date": False}
-            )
-            fig.update_yaxes(autorange="reversed") 
-            st.plotly_chart(fig, use_container_width=True)
-            
+            # Fallback check for missing date columns in old DB entries
+            if 'Start_Date' not in plot_df.columns or 'End_Date' not in plot_df.columns:
+                st.error("⚠️ Your ledger contains older trips missing exact start/end data. Please click **'Wipe Entire Database'** below to reset the tracker so the timeline can function properly.")
+            else:
+                plot_df['Start_Date'] = pd.to_datetime(plot_df['Start_Date'])
+                plot_df['End_Date'] = pd.to_datetime(plot_df['End_Date'])
+                
+                fig = px.timeline(
+                    plot_df, 
+                    x_start="Start_Date", 
+                    x_end="End_Date", 
+                    y="Traveler", 
+                    color="Location", 
+                    hover_data={"Cost": ":$,.2f", "Days": True, "Start_Date": False, "End_Date": False}
+                )
+                fig.update_yaxes(autorange="reversed") 
+                st.plotly_chart(fig, use_container_width=True)
+                
         except Exception as e:
             st.error(f"Not enough valid date data to generate timeline yet. Error: {e}")
 
