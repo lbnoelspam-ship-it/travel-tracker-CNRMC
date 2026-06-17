@@ -40,15 +40,20 @@ if "trip_database" not in st.session_state:
     st.session_state["trip_database"] = load_ledger()
 if "num_legs" not in st.session_state:
     st.session_state["num_legs"] = 1
-
-# The hidden counter that forces widgets to wipe clean
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
+if "show_budget" not in st.session_state:
+    st.session_state["show_budget"] = False
+
+def hide_budget():
+    """Callback function: Hides budget if the user modifies any input."""
+    st.session_state["show_budget"] = False
 
 def reset_estimator():
     """Increments the form key to instantly wipe all form inputs clean."""
     st.session_state["num_legs"] = 1
     st.session_state["form_key"] += 1
+    st.session_state["show_budget"] = False
 
 # ─── DATA INGESTION (BULLETPROOF CSV LOADER) ──────────────────────────
 
@@ -108,7 +113,6 @@ if not FEDERAL_RATES_DB:
     else:
         st.stop() 
 
-# Add a blank default option to force the budget section to hide on reset
 DROPDOWN_OPTIONS = ["-- Select Destination --"] + sorted(list(FEDERAL_RATES_DB.keys()))
 
 # ─── MATH, GEO, AND LIVE API UTILITIES ────────────────────────────────
@@ -191,7 +195,9 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
         d_code = dest_name if len(dest_name) == 3 and dest_name.isupper() else AIRPORT_MAP.get(dest_name, "JFK")
         
         date_str = flight_date.strftime("%Y-%m-%d") if isinstance(flight_date, date) else flight_date[:10]
-        url = f"https://serpapi.com/search.json?engine=google_flights&departure_id={o_code}&arrival_id={d_code}&outbound_date={date_str}&currency=USD&hl=en&api_key={api_key}"
+        
+        # FIXED: &type=2 added to force one-way pricing
+        url = f"https://serpapi.com/search.json?engine=google_flights&departure_id={o_code}&arrival_id={d_code}&outbound_date={date_str}&type=2&currency=USD&hl=en&api_key={api_key}"
         
         res = requests.get(url)
         data = res.json()
@@ -220,11 +226,11 @@ st.subheader("1. Core Metadata & Origin")
 
 col_meta1, col_meta2, col_meta3 = st.columns(3)
 with col_meta1:
-    traveler_name = st.text_input("Traveler Name", key=f"traveler_name_{st.session_state['form_key']}", placeholder="e.g. Larry")
+    traveler_name = st.text_input("Traveler Name", key=f"traveler_name_{st.session_state['form_key']}", placeholder="e.g. Larry", on_change=hide_budget)
 with col_meta2:
-    purpose_input = st.text_input("Purpose of Trip (Max 64 Characters)", key=f"purpose_{st.session_state['form_key']}", max_chars=64, placeholder="e.g. System Integration Assessment")
+    purpose_input = st.text_input("Purpose of Trip (Max 64 Characters)", key=f"purpose_{st.session_state['form_key']}", max_chars=64, placeholder="e.g. System Integration Assessment", on_change=hide_budget)
 with col_meta3:
-    origin_input = st.text_input("Starting Location", key=f"origin_{st.session_state['form_key']}", value="Houston, TX")
+    origin_input = st.text_input("Starting Location", key=f"origin_{st.session_state['form_key']}", value="Houston, TX", on_change=hide_budget)
 
 origin_geo = get_coordinates(origin_input)
 if origin_geo:
@@ -240,10 +246,12 @@ col_add, col_rem, _ = st.columns([2, 2, 6])
 with col_add:
     if st.button("＋ Add Next Destination Leg"):
         st.session_state["num_legs"] += 1
+        st.session_state["show_budget"] = False
         st.rerun()
 with col_rem:
     if st.button("➖ Remove Last Leg") and st.session_state["num_legs"] > 1:
         st.session_state["num_legs"] -= 1
+        st.session_state["show_budget"] = False
         st.rerun()
 
 raw_legs_inputs = []
@@ -258,11 +266,11 @@ for i in range(st.session_state["num_legs"]):
         default_start = raw_legs_inputs[i-1]["end"] + timedelta(days=1)
 
     with l_col1:
-        leg_name = st.selectbox(f"Location", options=DROPDOWN_OPTIONS, key=f"loc_raw_{i}_{st.session_state['form_key']}", index=0)
+        leg_name = st.selectbox(f"Location", options=DROPDOWN_OPTIONS, key=f"loc_raw_{i}_{st.session_state['form_key']}", index=0, on_change=hide_budget)
     with l_col2:
-        leg_start = st.date_input(f"Arrival Date", default_start, key=f"start_{i}_{st.session_state['form_key']}")
+        leg_start = st.date_input(f"Arrival Date", default_start, key=f"start_{i}_{st.session_state['form_key']}", on_change=hide_budget)
     with l_col3:
-        leg_end = st.date_input(f"Departure Date", default_start + timedelta(days=3), key=f"end_{i}_{st.session_state['form_key']}")
+        leg_end = st.date_input(f"Departure Date", default_start + timedelta(days=3), key=f"end_{i}_{st.session_state['form_key']}", on_change=hide_budget)
         
     if FEDERAL_RATES_DB and leg_name != "-- Select Destination --":
         raw_legs_inputs.append({
@@ -292,9 +300,20 @@ for idx, leg in enumerate(raw_legs_inputs):
         "start": leg["start"], "end": leg["end"], "days": (leg["end"] - leg["start"]).days + 1
     })
 
+# ─── CALCULATE BUDGET BUTTON ──────────────────────────────────────────
+
+st.markdown("<br>", unsafe_allow_html=True)
+if st.button("🧮 Calculate Budget", type="primary", use_container_width=True):
+    if not date_sequencing_valid:
+        st.error("Please fix chronological errors in your dates before calculating.")
+    elif len(legs_data) < st.session_state["num_legs"] or len(legs_data) == 0:
+        st.error("Please select a valid destination for every leg.")
+    else:
+        st.session_state["show_budget"] = True
+
 # ─── FINANCIAL CALCULATIONS AND COMPILATION ───────────────────────────
 
-if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) == st.session_state["num_legs"] and len(legs_data) > 0:
+if st.session_state.get("show_budget", False):
     st.markdown("---")
     st.subheader("3. Dynamic Budget Analysis")
     
@@ -305,22 +324,23 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
     total_airfare_cost = 0.0
     airfare_log = []
     
-    for idx in range(len(flight_chain) - 1):
-        p1 = flight_chain[idx]
-        p2 = flight_chain[idx+1]
-        dist = haversine_miles(p1["lat"], p1["lon"], p2["lat"], p2["lon"])
-        
-        flight_date = p2["start"] if idx > 0 else legs_data[0]["start"]
-        live_price = fetch_live_airfare(p1["name"], p2["name"], flight_date)
-        
-        if live_price is not None:
-            total_airfare_cost += live_price
-            airfare_log.append(f"Live API Data: ${live_price:,.2f}")
-        else:
-            is_intl_leg = p2.get("is_foreign", False) or p1.get("is_foreign", False)
-            leg_flight_cost = calculate_tiered_flight_cost(dist, is_intl_leg)
-            total_airfare_cost += leg_flight_cost
-            airfare_log.append(f"Tiered Distance Estimate: ${leg_flight_cost:,.2f}")
+    with st.spinner("Hitting APIs for Live Airfare..."):
+        for idx in range(len(flight_chain) - 1):
+            p1 = flight_chain[idx]
+            p2 = flight_chain[idx+1]
+            dist = haversine_miles(p1["lat"], p1["lon"], p2["lat"], p2["lon"])
+            
+            flight_date = p2["start"] if idx > 0 else legs_data[0]["start"]
+            live_price = fetch_live_airfare(p1["name"], p2["name"], flight_date)
+            
+            if live_price is not None:
+                total_airfare_cost += live_price
+                airfare_log.append(f"Live API Data: ${live_price:,.2f}")
+            else:
+                is_intl_leg = p2.get("is_foreign", False) or p1.get("is_foreign", False)
+                leg_flight_cost = calculate_tiered_flight_cost(dist, is_intl_leg)
+                total_airfare_cost += leg_flight_cost
+                airfare_log.append(f"Tiered Distance Estimate: ${leg_flight_cost:,.2f}")
 
     total_lodging_cost, total_rental_cost, total_per_diem_cost, total_misc_cost, total_days = 0.0, 0.0, 0.0, 0.0, 0
     
@@ -464,8 +484,6 @@ if st.session_state["trip_database"]:
                     hover_data={"Cost": ":$,.2f", "Days": True, "Start_Date": False, "End_Date": False}
                 )
                 fig.update_yaxes(autorange="reversed") 
-                
-                # The newly requested rounded corners!
                 fig.update_traces(marker_cornerradius=12)
                 
                 st.plotly_chart(fig, use_container_width=True)
