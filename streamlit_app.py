@@ -18,7 +18,7 @@ st.set_page_config(
 st.title("✈️ Advanced AI Travel Estimator & Multi-Leg Tracker")
 st.markdown("Enter localized travel itineraries. Rates are driven dynamically by your uploaded `rates.csv` file.")
 
-# ─── PERSISTENT DATA STORAGE (CSV LEDGER) ─────────────────────────────
+# ─── PERSISTENT DATA & FORM RESET LOGIC ───────────────────────────────
 
 LEDGER_FILE = "trip_ledger.csv"
 
@@ -34,10 +34,31 @@ def save_ledger(data):
     df = pd.DataFrame(data)
     df.to_csv(LEDGER_FILE, index=False)
 
+# Initialize Session States
 if "trip_database" not in st.session_state:
     st.session_state["trip_database"] = load_ledger()
 if "num_legs" not in st.session_state:
     st.session_state["num_legs"] = 1
+
+# Initialize Form Fields
+if "traveler_name" not in st.session_state:
+    st.session_state["traveler_name"] = ""
+if "purpose_input" not in st.session_state:
+    st.session_state["purpose_input"] = ""
+if "origin_input" not in st.session_state:
+    st.session_state["origin_input"] = "Houston, TX"
+
+def reset_estimator():
+    """Forces all form fields and legs back to their default states."""
+    st.session_state["num_legs"] = 1
+    st.session_state["traveler_name"] = ""
+    st.session_state["purpose_input"] = ""
+    st.session_state["origin_input"] = "Houston, TX"
+    
+    # Wipe out the dynamically generated leg memory
+    keys_to_delete = [k for k in st.session_state.keys() if k.startswith(('loc_raw_', 'start_', 'end_'))]
+    for k in keys_to_delete:
+        del st.session_state[k]
 
 # ─── DATA INGESTION (BULLETPROOF CSV LOADER) ──────────────────────────
 
@@ -189,73 +210,28 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
         pass
     return None
 
-def merge_overlapping_trips(records):
-    """Core Engine: Sweeps the database and mathematically fuses overlapping dates."""
-    if not records: return []
-    df = pd.DataFrame(records)
-    
-    required_cols = ['Month', 'Traveler', 'Location', 'Start_Date', 'End_Date', 'Dates', 'Days', 'Airfare', 'Per Diem', 'Lodging', 'Rental Car', 'Misc', 'Cost', 'Flight_Chain_JSON', 'Refresh Live Airfare']
-    for col in required_cols:
-        if col not in df.columns:
-            if col in ['Days', 'Airfare', 'Per Diem', 'Lodging', 'Rental Car', 'Misc', 'Cost']: df[col] = 0.0
-            elif col == 'Refresh Live Airfare': df[col] = False
-            else: df[col] = ""
 
-    df['Start_Date'] = pd.to_datetime(df['Start_Date'], errors='coerce')
-    df['End_Date'] = pd.to_datetime(df['End_Date'], errors='coerce')
-    df = df.dropna(subset=['Start_Date', 'End_Date'])
-    
-    df = df.sort_values(['Traveler', 'Location', 'Start_Date'])
-    
-    merged = []
-    for (traveler, loc), group in df.groupby(['Traveler', 'Location']):
-        group = group.reset_index(drop=True)
-        current = group.iloc[0].to_dict()
-        
-        for i in range(1, len(group)):
-            nxt = group.iloc[i].to_dict()
-            if nxt['Start_Date'] <= current['End_Date'] + pd.Timedelta(days=1):
-                current['End_Date'] = max(current['End_Date'], nxt['End_Date'])
-                current['Airfare'] += nxt.get('Airfare', 0)
-                current['Per Diem'] += nxt.get('Per Diem', 0)
-                current['Lodging'] += nxt.get('Lodging', 0)
-                current['Rental Car'] += nxt.get('Rental Car', 0)
-                current['Misc'] += nxt.get('Misc', 0)
-                current['Days'] += nxt.get('Days', 0)
-                current['Cost'] += nxt.get('Cost', 0)
-                
-                s_str = current['Start_Date'].strftime('%m/%d')
-                e_str = current['End_Date'].strftime('%m/%d/%y')
-                current['Dates'] = f"{s_str} - {e_str}"
-            else:
-                merged.append(current)
-                current = nxt
-        merged.append(current)
-        
-    for m in merged:
-        m['Start_Date'] = m['Start_Date'].isoformat()
-        m['End_Date'] = m['End_Date'].isoformat()
-        
-    return merged
+# ─── INLINE CORE METADATA ─────────────────────────────────────────────
 
-# ─── SIDEBAR CONFIGURATION CONTROLS ───────────────────────────────────
+st.markdown("---")
+st.subheader("1. Core Metadata & Origin")
 
-with st.sidebar:
-    st.header("1. Core Metadata")
-    traveler_name = st.text_input("Traveler Name", placeholder="e.g. Larry")
-    purpose_input = st.text_input("Purpose of Trip (Max 64 Characters)", max_chars=64, placeholder="e.g. System Integration Assessment")
-    
-    st.markdown("---")
-    st.header("2. Base Departure Origin")
-    
-    origin_input = st.text_input("Starting Location", value="Houston, TX")
-    origin_geo = get_coordinates(origin_input)
-    if origin_geo:
-        st.caption(f"✔️ Origin locked: {origin_geo['clean_name']}")
+col_meta1, col_meta2, col_meta3 = st.columns(3)
+with col_meta1:
+    traveler_name = st.text_input("Traveler Name", key="traveler_name", placeholder="e.g. Larry")
+with col_meta2:
+    purpose_input = st.text_input("Purpose of Trip (Max 64 Characters)", key="purpose_input", max_chars=64, placeholder="e.g. System Integration Assessment")
+with col_meta3:
+    origin_input = st.text_input("Starting Location", key="origin_input")
+
+origin_geo = get_coordinates(origin_input)
+if origin_geo:
+    st.caption(f"✔️ Origin locked: **{origin_geo['clean_name']}**")
 
 # ─── ITINERARY CONSOLE & SEAMLESS DATE TRACKER ────────────────────────
 
-st.subheader("🗓️ Multi-Leg Destination & Date Configuration")
+st.markdown("---")
+st.subheader("2. Multi-Leg Destination & Dates")
 st.markdown("Specify destinations chronologically. Dates must sequence perfectly with no gaps or overlaps.")
 
 col_add, col_rem, _ = st.columns([2, 2, 6])
@@ -318,7 +294,7 @@ for idx, leg in enumerate(raw_legs_inputs):
 
 if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) == st.session_state["num_legs"]:
     st.markdown("---")
-    st.subheader("📊 Dynamic Budget Analysis")
+    st.subheader("3. Dynamic Budget Analysis")
     
     flight_chain = [{"name": origin_geo["clean_name"], "lat": origin_geo["lat"], "lon": origin_geo["lon"], "is_foreign": origin_geo["is_foreign"], "start": date.today()}]
     for leg in legs_data: flight_chain.append(leg)
@@ -376,7 +352,6 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
             "Governing Authority": leg["authority"]
         })
 
-    # RESTORED ESTIMATOR BREAKOUT TABLE
     ledger_df = pd.DataFrame([
         {"Category": "Airfare", "Estimated Cost": round(total_airfare_cost, 2), "Details": " | ".join(airfare_log)},
         {"Category": "Lodging", "Estimated Cost": round(total_lodging_cost, 2), "Details": "Sum of combined multi-leg lodging limits across dates"},
@@ -396,7 +371,6 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
         use_container_width=True,
     )
     
-    # Map back manually adjusted data editor values to save properly
     costs_mapped = dict(zip(edited_df["Category"], edited_df["Estimated Cost"]))
     final_calculated_sum = edited_df["Estimated Cost"].sum()
     
@@ -405,42 +379,50 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
         
     st.markdown(f"### **Total Multi-Leg Projected Budget:** ${final_calculated_sum:,.2f}")
     
-    if st.button("💾 Commit & Log Trip to Persistent Ledger"):
-        safe_traveler = traveler_name.strip() if traveler_name.strip() else "Unknown Traveler"
-        flight_json = json.dumps([{"name": f["name"], "start": f["start"].isoformat() if isinstance(f["start"], date) else f["start"]} for f in flight_chain])
-        
-        new_entry = {
-            "Month": global_start.strftime("%B %Y"),
-            "Traveler": safe_traveler,
-            "Location": ", ".join([l["name"] for l in legs_data]),
-            "Start_Date": global_start.isoformat(),
-            "End_Date": global_end.isoformat(),
-            "Dates": f"{global_start.strftime('%m/%d')} - {global_end.strftime('%m/%d/%y')}",
-            "Days": total_days,
-            "Airfare": round(costs_mapped.get("Airfare", total_airfare_cost), 2),
-            "Per Diem": round(costs_mapped.get("Per Diem (M&IE)", total_per_diem_cost), 2),
-            "Lodging": round(costs_mapped.get("Lodging", total_lodging_cost), 2),
-            "Rental Car": round(costs_mapped.get("Economy Rental Vehicle", total_rental_cost), 2),
-            "Misc": round(costs_mapped.get("Miscellaneous", total_misc_cost), 2),
-            "Cost": round(final_calculated_sum, 2),
-            "Flight_Chain_JSON": flight_json,
-            "Refresh Live Airfare": False
-        }
-        
-        st.session_state["trip_database"].append(new_entry)
-        st.session_state["trip_database"] = merge_overlapping_trips(st.session_state["trip_database"])
-        save_ledger(st.session_state["trip_database"])
-        
-        st.success("Itinerary merged and permanently saved to trip_ledger.csv!")
-        st.rerun()
+    # ─── ACTION BUTTONS: SAVE OR CLEAR ────────────────────────────────
+    
+    col_save, col_clear = st.columns([3, 7])
+    
+    with col_save:
+        if st.button("💾 Commit & Log Trip"):
+            safe_traveler = traveler_name.strip() if traveler_name.strip() else "Unknown Traveler"
+            flight_json = json.dumps([{"name": f["name"], "start": f["start"].isoformat() if isinstance(f["start"], date) else f["start"]} for f in flight_chain])
+            
+            new_entry = {
+                "Month": global_start.strftime("%B %Y"),
+                "Traveler": safe_traveler,
+                "Location": ", ".join([l["name"] for l in legs_data]),
+                "Dates": f"{global_start.strftime('%m/%d')} - {global_end.strftime('%m/%d/%y')}",
+                "Days": total_days,
+                "Airfare": round(costs_mapped.get("Airfare", total_airfare_cost), 2),
+                "Per Diem": round(costs_mapped.get("Per Diem (M&IE)", total_per_diem_cost), 2),
+                "Lodging": round(costs_mapped.get("Lodging", total_lodging_cost), 2),
+                "Rental Car": round(costs_mapped.get("Economy Rental Vehicle", total_rental_cost), 2),
+                "Misc": round(costs_mapped.get("Miscellaneous", total_misc_cost), 2),
+                "Cost": round(final_calculated_sum, 2),
+                "Flight_Chain_JSON": flight_json,
+                "Refresh Live Airfare": False
+            }
+            
+            st.session_state["trip_database"].append(new_entry)
+            save_ledger(st.session_state["trip_database"])
+            
+            reset_estimator()  # Wipes fields clean after successful save
+            st.success("Itinerary permanently saved to trip_ledger.csv! Form reset.")
+            st.rerun()
+            
+    with col_clear:
+        if st.button("🔄 Clear Estimate & Start Over"):
+            reset_estimator()
+            st.rerun()
 
 # ─── MASTER CONSOLIDATED ACCUMULATOR LEDGER ───────────────────────────
 
 st.markdown("---")
-st.subheader("📊 Centralized Travel Tracker Archive")
+st.subheader("4. Centralized Travel Tracker Archive")
 
 if st.session_state["trip_database"]:
-    st.info("💡 **Interactive Ledger:** Check 'Refresh Live Airfare' and hit Save to update flight costs. Overlapping dates are automatically merged.")
+    st.info("💡 **Interactive Ledger:** Individual line item entries. Check 'Refresh Live Airfare' and hit Save to update flight costs.")
     
     df = pd.DataFrame(st.session_state["trip_database"])
     
@@ -485,7 +467,8 @@ if st.session_state["trip_database"]:
                             updated_records[idx][c] = row[c]
                     updated_records[idx]['Refresh Live Airfare'] = False
             
-            st.session_state["trip_database"] = merge_overlapping_trips(updated_records)
+            # Removed the pairing function; simply replace DB and save
+            st.session_state["trip_database"] = updated_records
             save_ledger(st.session_state["trip_database"])
             st.success("Archive updated & Airfares Refreshed!")
             st.rerun()
