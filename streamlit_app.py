@@ -23,7 +23,6 @@ st.markdown("Enter localized travel itineraries. Rates are driven dynamically by
 LEDGER_FILE = "trip_ledger.csv"
 
 def load_ledger():
-    """Loads historical trips from the persistent CSV file."""
     if os.path.exists(LEDGER_FILE):
         try:
             return pd.read_csv(LEDGER_FILE).to_dict('records')
@@ -32,7 +31,6 @@ def load_ledger():
     return []
 
 def save_ledger(data):
-    """Saves trips permanently to the CSV file."""
     df = pd.DataFrame(data)
     df.to_csv(LEDGER_FILE, index=False)
 
@@ -45,9 +43,7 @@ if "num_legs" not in st.session_state:
 
 @st.cache_data
 def load_rates(uploaded_file=None):
-    """Aggressively hunts for the CSV file, or accepts a direct manual upload."""
     df = None
-    
     if uploaded_file is not None:
         try:
             df = pd.read_csv(uploaded_file)
@@ -62,7 +58,6 @@ def load_rates(uploaded_file=None):
             "rates.csv",
             "Rates.csv"
         ]
-        
         for path in possible_paths:
             if os.path.exists(path):
                 try:
@@ -86,15 +81,12 @@ def load_rates(uploaded_file=None):
         except Exception as e:
             st.error(f"⚠️ **Data Format Error:** Your CSV is missing required columns. {e}")
             return None
-            
     return None 
 
 FEDERAL_RATES_DB = load_rates()
 
 if not FEDERAL_RATES_DB:
     st.warning("⚠️ **Server Sync Issue:** Streamlit cannot find `rates.csv` in the cloud directory.")
-    st.info("💡 **Quick Fix:** Drag and drop your `rates.csv` file below to keep working immediately.")
-    
     manual_upload = st.file_uploader("Upload rates.csv here", type=['csv'])
     if manual_upload:
         FEDERAL_RATES_DB = load_rates(manual_upload)
@@ -110,14 +102,12 @@ LOCATIONS_LIST = sorted(list(FEDERAL_RATES_DB.keys()))
 # ─── MATH, GEO, AND LIVE API UTILITIES ────────────────────────────────
 
 def clean_to_english_ascii(text: str) -> str:
-    """Removes non-English character scripts to ensure plain English strings."""
     ascii_clean = text.encode("ascii", errors="ignore").decode("ascii")
     ascii_clean = re.sub(r',\s*,', ',', ascii_clean)
     return ascii_clean.strip().strip(",")
 
 @st.cache_data(ttl=86400)
 def get_coordinates(location_query: str):
-    """Fetches lat/lon and foreign status via OpenStreetMap for flight math."""
     if not location_query or len(location_query.strip()) < 3:
         return None
     try:
@@ -126,18 +116,14 @@ def get_coordinates(location_query: str):
         req = urllib.request.Request(url, headers={'User-Agent': 'AITravelEstimatorProject/1.3'})
         with urllib.request.urlopen(req) as response:
             data = json.loads(response.read())
-            
         if not data:
             return None
-            
         top_match = data[0]
         address = top_match.get("address", {})
-        
         city = address.get("city") or address.get("town") or address.get("suburb") or location_query.split(",")[0]
         state = address.get("state", "")
         country = address.get("country", "United States")
         country_code = address.get("country_code", "us").upper()
-        
         display_name = f"{city}, {state}" if state and country_code == "US" else f"{city}, {country}"
         
         return {
@@ -147,11 +133,7 @@ def get_coordinates(location_query: str):
             "is_foreign": country_code != "US"
         }
     except Exception:
-        return {
-            "clean_name": clean_to_english_ascii(location_query.title()),
-            "lat": 38.89, "lon": -77.03, 
-            "is_foreign": False
-        }
+        return {"clean_name": clean_to_english_ascii(location_query.title()), "lat": 38.89, "lon": -77.03, "is_foreign": False}
 
 def haversine_miles(lat1, lon1, lat2, lon2):
     r = 3956 
@@ -161,17 +143,15 @@ def haversine_miles(lat1, lon1, lat2, lon2):
     return round(2 * r * math.asin(math.sqrt(a)), 1)
 
 def calculate_tiered_flight_cost(distance, is_foreign):
-    """Mimics real-world airline pricing using economies of scale."""
     if not is_foreign:
-        if distance < 400:     return 150.0 + (distance * 0.20)  
-        elif distance < 1500:  return 200.0 + (distance * 0.12)  
-        else:                  return 250.0 + (distance * 0.08)  
+        if distance < 400: return 150.0 + (distance * 0.20)  
+        elif distance < 1500: return 200.0 + (distance * 0.12)  
+        else: return 250.0 + (distance * 0.08)  
     else:
-        if distance < 1000:    return 250.0 + (distance * 0.15)  
-        elif distance < 4000:  return 400.0 + (distance * 0.08)  
-        else:                  return 600.0 + (distance * 0.04)  
+        if distance < 1000: return 250.0 + (distance * 0.15)  
+        elif distance < 4000: return 400.0 + (distance * 0.08)  
+        else: return 600.0 + (distance * 0.04)  
 
-# IATA Mapping for Federal/Navy locations to Commercial Airports
 AIRPORT_MAP = {
     "Washington, DC": "DCA", "Chesapeake, VA": "ORF", "Norfolk, VA": "ORF",
     "Lexington, VA": "ROA", "Groton, CT": "BDL", "Portsmouth, ME": "PSM",
@@ -188,7 +168,6 @@ AIRPORT_MAP = {
 
 @st.cache_data(ttl=86400) 
 def fetch_live_airfare(origin_name, dest_name, flight_date):
-    """Hits Google Flights via SerpApi. Falls back to None if fails."""
     try:
         api_key = st.secrets.get("SERPAPI_KEY")
         if not api_key: return None
@@ -196,7 +175,7 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
         o_code = origin_name if len(origin_name) == 3 and origin_name.isupper() else AIRPORT_MAP.get(origin_name, "JFK")
         d_code = dest_name if len(dest_name) == 3 and dest_name.isupper() else AIRPORT_MAP.get(dest_name, "JFK")
         
-        date_str = flight_date.strftime("%Y-%m-%d")
+        date_str = flight_date.strftime("%Y-%m-%d") if isinstance(flight_date, date) else flight_date[:10]
         url = f"https://serpapi.com/search.json?engine=google_flights&departure_id={o_code}&arrival_id={d_code}&outbound_date={date_str}&currency=USD&hl=en&api_key={api_key}"
         
         res = requests.get(url)
@@ -209,6 +188,57 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
     except Exception:
         pass
     return None
+
+def merge_overlapping_trips(records):
+    """Core Engine: Sweeps the database and mathematically fuses overlapping dates."""
+    if not records: return []
+    df = pd.DataFrame(records)
+    
+    # Ensure backwards compatibility with old ledger files
+    required_cols = ['Month', 'Traveler', 'Location', 'Start_Date', 'End_Date', 'Dates', 'Days', 'Airfare', 'Per Diem', 'Lodging', 'Rental Car', 'Misc', 'Cost', 'Flight_Chain_JSON', 'Refresh Live Airfare']
+    for col in required_cols:
+        if col not in df.columns:
+            if col in ['Days', 'Airfare', 'Per Diem', 'Lodging', 'Rental Car', 'Misc', 'Cost']: df[col] = 0.0
+            elif col == 'Refresh Live Airfare': df[col] = False
+            else: df[col] = ""
+
+    df['Start_Date'] = pd.to_datetime(df['Start_Date'], errors='coerce')
+    df['End_Date'] = pd.to_datetime(df['End_Date'], errors='coerce')
+    df = df.dropna(subset=['Start_Date', 'End_Date'])
+    
+    df = df.sort_values(['Traveler', 'Location', 'Start_Date'])
+    
+    merged = []
+    for (traveler, loc), group in df.groupby(['Traveler', 'Location']):
+        group = group.reset_index(drop=True)
+        current = group.iloc[0].to_dict()
+        
+        for i in range(1, len(group)):
+            nxt = group.iloc[i].to_dict()
+            # If dates overlap or touch (<= 1 day gap), merge them!
+            if nxt['Start_Date'] <= current['End_Date'] + pd.Timedelta(days=1):
+                current['End_Date'] = max(current['End_Date'], nxt['End_Date'])
+                current['Airfare'] += nxt.get('Airfare', 0)
+                current['Per Diem'] += nxt.get('Per Diem', 0)
+                current['Lodging'] += nxt.get('Lodging', 0)
+                current['Rental Car'] += nxt.get('Rental Car', 0)
+                current['Misc'] += nxt.get('Misc', 0)
+                current['Days'] += nxt.get('Days', 0)
+                current['Cost'] += nxt.get('Cost', 0)
+                
+                s_str = current['Start_Date'].strftime('%m/%d')
+                e_str = current['End_Date'].strftime('%m/%d/%y')
+                current['Dates'] = f"{s_str} - {e_str}"
+            else:
+                merged.append(current)
+                current = nxt
+        merged.append(current)
+        
+    for m in merged:
+        m['Start_Date'] = m['Start_Date'].isoformat()
+        m['End_Date'] = m['End_Date'].isoformat()
+        
+    return merged
 
 # ─── SIDEBAR CONFIGURATION CONTROLS ───────────────────────────────────
 
@@ -260,11 +290,7 @@ for i in range(st.session_state["num_legs"]):
         
     if FEDERAL_RATES_DB:
         raw_legs_inputs.append({
-            "index": i,
-            "name": leg_name,
-            "data": FEDERAL_RATES_DB[leg_name],
-            "start": leg_start,
-            "end": leg_end
+            "index": i, "name": leg_name, "data": FEDERAL_RATES_DB[leg_name], "start": leg_start, "end": leg_end
         })
 
 legs_data = []
@@ -276,30 +302,18 @@ for idx, leg in enumerate(raw_legs_inputs):
     if idx > 0:
         prior_end_date = raw_legs_inputs[idx-1]["end"]
         expected_start_date = prior_end_date + timedelta(days=1)
-        
-        if leg["start"] < expected_start_date:
-            st.error(f"❌ **Timeline Overlap Error on Leg #{idx+1}:** Must start exactly on **{expected_start_date.strftime('%B %d, %Y')}**.")
-            date_sequencing_valid = False
-        elif leg["start"] > expected_start_date:
-            st.error(f"❌ **Timeline Gap Error on Leg #{idx+1}:** Must start exactly on **{expected_start_date.strftime('%B %d, %Y')}**.")
+        if leg["start"] < expected_start_date or leg["start"] > expected_start_date:
+            st.error(f"❌ **Timeline Error on Leg #{idx+1}:** Must start exactly on **{expected_start_date.strftime('%B %d, %Y')}**.")
             date_sequencing_valid = False
 
     leg_geo = get_coordinates(leg["name"])
-    if not leg_geo:
-        leg_geo = {"lat": 0.0, "lon": 0.0, "is_foreign": "GSA" not in leg["data"]["authority"]}
+    if not leg_geo: leg_geo = {"lat": 0.0, "lon": 0.0, "is_foreign": "GSA" not in leg["data"]["authority"]}
 
     legs_data.append({
-        "index": leg["index"],
-        "name": leg["name"],
-        "lodging_rate": leg["data"]["lodging"],
-        "mie_rate": leg["data"]["mie"],
-        "authority": leg["data"]["authority"],
-        "lat": leg_geo["lat"],
-        "lon": leg_geo["lon"],
-        "is_foreign": leg_geo["is_foreign"],
-        "start": leg["start"],
-        "end": leg["end"],
-        "days": (leg["end"] - leg["start"]).days + 1
+        "index": leg["index"], "name": leg["name"], "lodging_rate": leg["data"]["lodging"],
+        "mie_rate": leg["data"]["mie"], "authority": leg["data"]["authority"],
+        "lat": leg_geo["lat"], "lon": leg_geo["lon"], "is_foreign": leg_geo["is_foreign"],
+        "start": leg["start"], "end": leg["end"], "days": (leg["end"] - leg["start"]).days + 1
     })
 
 # ─── FINANCIAL CALCULATIONS AND COMPILATION ───────────────────────────
@@ -309,8 +323,7 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
     st.subheader("📊 Dynamic Budget Analysis")
     
     flight_chain = [{"name": origin_geo["clean_name"], "lat": origin_geo["lat"], "lon": origin_geo["lon"], "is_foreign": origin_geo["is_foreign"], "start": date.today()}]
-    for leg in legs_data:
-        flight_chain.append(leg)
+    for leg in legs_data: flight_chain.append(leg)
     flight_chain.append({"name": origin_geo["clean_name"], "lat": origin_geo["lat"], "lon": origin_geo["lon"], "is_foreign": origin_geo["is_foreign"], "start": legs_data[-1]["end"]})
     
     total_airfare_cost = 0.0
@@ -333,17 +346,13 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
             total_airfare_cost += leg_flight_cost
             airfare_log.append(f"Tiered Distance Estimate: ${leg_flight_cost:,.2f}")
 
-    total_lodging_cost = 0.0
-    total_rental_cost = 0.0
-    total_per_diem_cost = 0.0
-    total_misc_cost = 0.0
+    total_lodging_cost, total_rental_cost, total_per_diem_cost, total_misc_cost, total_days = 0.0, 0.0, 0.0, 0.0, 0
     
     global_start = min(l["start"] for l in legs_data)
     global_end = max(l["end"] for l in legs_data)
     
-    breakdown_table_rows = []
-    
     for idx, leg in enumerate(legs_data):
+        total_days += leg["days"]
         leg_lodging_rate = leg["lodging_rate"]
         leg_mie_rate = leg["mie_rate"]
         leg_car_rate = round(65.0 if not leg["is_foreign"] else 95.0, 2)
@@ -353,68 +362,45 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
         total_rental_cost += (leg["days"] * leg_car_rate)
         total_misc_cost += (140.0 if leg["is_foreign"] else 90.0) + (15.0 * leg["days"])
         
-        leg_pd_sum = 0.0
-        
         for day_offset in range(leg["days"]):
             current_day = leg["start"] + timedelta(days=day_offset)
-            if current_day == global_start or current_day == global_end:
-                leg_pd_sum += (leg_mie_rate * 0.75)
-            else:
-                leg_pd_sum += leg_mie_rate
-                
-        total_per_diem_cost += leg_pd_sum
-        
-        breakdown_table_rows.append({
-            "Travel Segment": f"Leg #{idx+1}: {leg['name']}",
-            "Lodging Limit / Night": f"${leg_lodging_rate:,.2f}",
-            "First/Last Day Per Diem": f"${leg_mie_rate * 0.75:,.2f}",
-            "Middle Day Per Diem": f"${leg_mie_rate:,.2f}",
-            "Subtotal Days": f"{leg_nights} Nights / {leg['days']} Days",
-            "Governing Authority": leg["authority"]
-        })
+            if current_day == global_start or current_day == global_end: total_per_diem_cost += (leg_mie_rate * 0.75)
+            else: total_per_diem_cost += leg_mie_rate
 
-    ledger_df = pd.DataFrame([
-        {"Category": "Airfare", "Estimated Cost": round(total_airfare_cost, 2), "Details": " | ".join(airfare_log)},
-        {"Category": "Lodging", "Estimated Cost": round(total_lodging_cost, 2), "Details": "Sum of combined multi-leg lodging limits across dates"},
-        {"Category": "Economy Rental Vehicle", "Estimated Cost": round(total_rental_cost, 2), "Details": "Rental vehicles computed across active itinerary windows"},
-        {"Category": "Per Diem (M&IE)", "Estimated Cost": round(total_per_diem_cost, 2), "Details": "Calculated via strict limits specified in rates.csv"},
-        {"Category": "Miscellaneous", "Estimated Cost": round(total_misc_cost, 2), "Details": "Aggregated fuel allocations, baggage costs, and local transport"}
-    ])
-    
-    edited_df = st.data_editor(
-        ledger_df,
-        num_rows="fixed",
-        column_config={
-            "Category": st.column_config.TextColumn("Category", disabled=True),
-            "Estimated Cost": st.column_config.NumberColumn("Estimated Cost", min_value=0.0, format="$%.2f"),
-            "Details": st.column_config.TextColumn("Details", disabled=True),
-        },
-        use_container_width=True,
-    )
-    
-    final_calculated_sum = edited_df["Estimated Cost"].sum()
-    
-    st.markdown("#### 📋 Comprehensive Per Diem & Lodging Rates Reference Table")
-    st.table(pd.DataFrame(breakdown_table_rows)) 
-        
+    final_calculated_sum = total_airfare_cost + total_lodging_cost + total_rental_cost + total_per_diem_cost + total_misc_cost
     st.markdown(f"### **Total Multi-Leg Projected Budget:** ${final_calculated_sum:,.2f}")
     
     if st.button("💾 Commit & Log Trip to Persistent Ledger"):
-        comma_locations = ", ".join([l["name"] for l in legs_data])
-        
-        # NOTE: .strip() has been added here to eliminate ghost spaces!
         safe_traveler = traveler_name.strip() if traveler_name.strip() else "Unknown Traveler"
+        
+        # Serialize the routing code so we can refresh it later
+        flight_json = json.dumps([{"name": f["name"], "start": f["start"].isoformat() if isinstance(f["start"], date) else f["start"]} for f in flight_chain])
         
         new_entry = {
             "Month": global_start.strftime("%B %Y"),
             "Traveler": safe_traveler,
-            "Location": comma_locations,
+            "Location": ", ".join([l["name"] for l in legs_data]),
+            "Start_Date": global_start.isoformat(),
+            "End_Date": global_end.isoformat(),
             "Dates": f"{global_start.strftime('%m/%d')} - {global_end.strftime('%m/%d/%y')}",
-            "Cost": round(final_calculated_sum, 2)
+            "Days": total_days,
+            "Airfare": round(total_airfare_cost, 2),
+            "Per Diem": round(total_per_diem_cost, 2),
+            "Lodging": round(total_lodging_cost, 2),
+            "Rental Car": round(total_rental_cost, 2),
+            "Misc": round(total_misc_cost, 2),
+            "Cost": round(final_calculated_sum, 2),
+            "Flight_Chain_JSON": flight_json,
+            "Refresh Live Airfare": False
         }
+        
         st.session_state["trip_database"].append(new_entry)
+        
+        # Run the overlap sweeper before saving!
+        st.session_state["trip_database"] = merge_overlapping_trips(st.session_state["trip_database"])
         save_ledger(st.session_state["trip_database"])
-        st.success("Itinerary permanently saved to trip_ledger.csv!")
+        
+        st.success("Itinerary merged and permanently saved to trip_ledger.csv!")
         st.rerun()
 
 # ─── MASTER CONSOLIDATED ACCUMULATOR LEDGER ───────────────────────────
@@ -423,15 +409,16 @@ st.markdown("---")
 st.subheader("📊 Centralized Travel Tracker Archive")
 
 if st.session_state["trip_database"]:
-    st.info("💡 **Interactive Ledger:** Trips with identical Months, Travelers, Locations, and Dates are automatically paired and summed. Delete rows by checking the box on the left and pressing 'Delete'.")
+    st.info("💡 **Interactive Ledger:** Check 'Refresh Live Airfare' and hit Save to update flight costs. Overlapping dates are automatically merged.")
     
     df = pd.DataFrame(st.session_state["trip_database"])
     
-    # PAIRING/MERGING LOGIC
-    merged_df = df.groupby(['Month', 'Traveler', 'Location', 'Dates'], as_index=False)['Cost'].sum()
+    # Hide technical backend columns from the user interface
+    display_cols = ['Refresh Live Airfare', 'Month', 'Traveler', 'Location', 'Dates', 'Days', 'Airfare', 'Per Diem', 'Lodging', 'Rental Car', 'Misc', 'Cost']
+    available_cols = [c for c in display_cols if c in df.columns]
     
     edited_archive = st.data_editor(
-        merged_df,
+        df[available_cols],
         num_rows="dynamic",
         use_container_width=True,
         key="archive_editor"
@@ -439,25 +426,50 @@ if st.session_state["trip_database"]:
     
     # EXPORT LOGIC
     csv = edited_archive.to_csv(index=False).encode('utf-8')
-    st.download_button(
-        label="📥 Export Ledger to Spreadsheet (CSV)",
-        data=csv,
-        file_name='travel_ledger_export.csv',
-        mime='text/csv',
-    )
+    st.download_button("📥 Export Ledger to Spreadsheet (CSV)", data=csv, file_name='travel_ledger_export.csv', mime='text/csv')
     
     col1, col2 = st.columns([2, 8])
     with col1:
-        if st.button("💾 Save Archive Changes"):
-            st.session_state["trip_database"] = edited_archive.dropna(how="all").to_dict('records')
+        if st.button("💾 Save Archive Changes & Process Refreshes"):
+            updated_records = df.to_dict('records') # Get the full records with hidden columns
+            
+            # Apply edits and process airfare refreshes
+            for idx, row in edited_archive.iterrows():
+                if idx < len(updated_records):
+                    # Check if the user requested an airfare refresh
+                    if row.get('Refresh Live Airfare', False) and 'Flight_Chain_JSON' in updated_records[idx]:
+                        st.toast(f"Fetching live airfare for {row['Traveler']}...")
+                        try:
+                            chain = json.loads(updated_records[idx]['Flight_Chain_JSON'])
+                            new_airfare = 0.0
+                            for i in range(len(chain) - 1):
+                                p1, p2 = chain[i], chain[i+1]
+                                price = fetch_live_airfare(p1['name'], p2['name'], p2['start'])
+                                new_airfare += price if price else 0.0
+                            
+                            if new_airfare > 0:
+                                updated_records[idx]['Airfare'] = round(new_airfare, 2)
+                                # Recalculate total cost
+                                updated_records[idx]['Cost'] = sum([updated_records[idx][c] for c in ['Airfare', 'Per Diem', 'Lodging', 'Rental Car', 'Misc']])
+                        except Exception:
+                            pass
+                    
+                    # Update all other visible columns based on user edits
+                    for c in available_cols:
+                        if c != 'Refresh Live Airfare':
+                            updated_records[idx][c] = row[c]
+                    updated_records[idx]['Refresh Live Airfare'] = False # Reset the checkbox
+            
+            # Run the overlap sweeper one more time just to be safe
+            st.session_state["trip_database"] = merge_overlapping_trips(updated_records)
             save_ledger(st.session_state["trip_database"])
-            st.success("Archive updated & synced!")
+            st.success("Archive updated & Airfares Refreshed!")
             st.rerun()
+            
     with col2:
         if st.button("❌ Wipe Entire Database"):
             st.session_state["trip_database"] = []
-            if os.path.exists(LEDGER_FILE):
-                os.remove(LEDGER_FILE)
+            if os.path.exists(LEDGER_FILE): os.remove(LEDGER_FILE)
             st.rerun()
 else:
     st.caption("No records currently established inside the historical ledger.")
