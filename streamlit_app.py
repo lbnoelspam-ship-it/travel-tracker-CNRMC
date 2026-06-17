@@ -40,25 +40,14 @@ if "trip_database" not in st.session_state:
 if "num_legs" not in st.session_state:
     st.session_state["num_legs"] = 1
 
-# Initialize Form Fields
-if "traveler_name" not in st.session_state:
-    st.session_state["traveler_name"] = ""
-if "purpose_input" not in st.session_state:
-    st.session_state["purpose_input"] = ""
-if "origin_input" not in st.session_state:
-    st.session_state["origin_input"] = "Houston, TX"
+# The hidden counter that forces widgets to wipe clean
+if "form_key" not in st.session_state:
+    st.session_state["form_key"] = 0
 
 def reset_estimator():
-    """Forces all form fields and legs back to their default states."""
+    """Increments the form key to instantly wipe all form inputs clean."""
     st.session_state["num_legs"] = 1
-    st.session_state["traveler_name"] = ""
-    st.session_state["purpose_input"] = ""
-    st.session_state["origin_input"] = "Houston, TX"
-    
-    # Wipe out the dynamically generated leg memory
-    keys_to_delete = [k for k in st.session_state.keys() if k.startswith(('loc_raw_', 'start_', 'end_'))]
-    for k in keys_to_delete:
-        del st.session_state[k]
+    st.session_state["form_key"] += 1
 
 # ─── DATA INGESTION (BULLETPROOF CSV LOADER) ──────────────────────────
 
@@ -218,11 +207,11 @@ st.subheader("1. Core Metadata & Origin")
 
 col_meta1, col_meta2, col_meta3 = st.columns(3)
 with col_meta1:
-    traveler_name = st.text_input("Traveler Name", key="traveler_name", placeholder="e.g. Larry")
+    traveler_name = st.text_input("Traveler Name", key=f"traveler_name_{st.session_state['form_key']}", placeholder="e.g. Larry")
 with col_meta2:
-    purpose_input = st.text_input("Purpose of Trip (Max 64 Characters)", key="purpose_input", max_chars=64, placeholder="e.g. System Integration Assessment")
+    purpose_input = st.text_input("Purpose of Trip (Max 64 Characters)", key=f"purpose_{st.session_state['form_key']}", max_chars=64, placeholder="e.g. System Integration Assessment")
 with col_meta3:
-    origin_input = st.text_input("Starting Location", key="origin_input")
+    origin_input = st.text_input("Starting Location", key=f"origin_{st.session_state['form_key']}", value="Houston, TX")
 
 origin_geo = get_coordinates(origin_input)
 if origin_geo:
@@ -256,11 +245,11 @@ for i in range(st.session_state["num_legs"]):
         default_start = raw_legs_inputs[i-1]["end"] + timedelta(days=1)
 
     with l_col1:
-        leg_name = st.selectbox(f"Location", options=LOCATIONS_LIST, key=f"loc_raw_{i}", index=0)
+        leg_name = st.selectbox(f"Location", options=LOCATIONS_LIST, key=f"loc_raw_{i}_{st.session_state['form_key']}", index=0)
     with l_col2:
-        leg_start = st.date_input(f"Arrival Date", default_start, key=f"start_{i}")
+        leg_start = st.date_input(f"Arrival Date", default_start, key=f"start_{i}_{st.session_state['form_key']}")
     with l_col3:
-        leg_end = st.date_input(f"Departure Date", default_start + timedelta(days=3), key=f"end_{i}")
+        leg_end = st.date_input(f"Departure Date", default_start + timedelta(days=3), key=f"end_{i}_{st.session_state['form_key']}")
         
     if FEDERAL_RATES_DB:
         raw_legs_inputs.append({
@@ -407,7 +396,7 @@ if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) 
             st.session_state["trip_database"].append(new_entry)
             save_ledger(st.session_state["trip_database"])
             
-            reset_estimator()  # Wipes fields clean after successful save
+            reset_estimator()  
             st.success("Itinerary permanently saved to trip_ledger.csv! Form reset.")
             st.rerun()
             
@@ -467,7 +456,6 @@ if st.session_state["trip_database"]:
                             updated_records[idx][c] = row[c]
                     updated_records[idx]['Refresh Live Airfare'] = False
             
-            # Removed the pairing function; simply replace DB and save
             st.session_state["trip_database"] = updated_records
             save_ledger(st.session_state["trip_database"])
             st.success("Archive updated & Airfares Refreshed!")
