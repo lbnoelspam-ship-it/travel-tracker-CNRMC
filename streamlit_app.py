@@ -7,6 +7,7 @@ import math
 import re
 import os
 import requests
+import plotly.express as px
 
 # --- PAGE SETUP ---
 st.set_page_config(
@@ -426,8 +427,38 @@ if st.session_state["trip_database"]:
         key="archive_editor"
     )
     
-    csv = edited_archive.to_csv(index=False).encode('utf-8')
+csv = edited_archive.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Export Ledger to Spreadsheet (CSV)", data=csv, file_name='travel_ledger_export.csv', mime='text/csv')
+    
+    # ─── GANTT CHART TIMELINE ─────────────────────────────────────────
+    if st.button("📊 Generate Deployment Timeline"):
+        st.markdown("### Contractor Travel Schedule")
+        try:
+            # Create a copy of the data specifically for graphing
+            plot_df = pd.DataFrame(st.session_state["trip_database"])
+            
+            # Convert the hidden ISO strings back into real dates for the graph
+            plot_df['Start_Date'] = pd.to_datetime(plot_df['Start_Date'])
+            plot_df['End_Date'] = pd.to_datetime(plot_df['End_Date'])
+            
+            # Build the interactive Gantt chart
+            fig = px.timeline(
+                plot_df, 
+                x_start="Start_Date", 
+                x_end="End_Date", 
+                y="Traveler", 
+                color="Location", # Color-codes the bars based on the destination
+                hover_data={"Cost": ":$,.2f", "Days": True, "Start_Date": False, "End_Date": False}
+            )
+            
+            # Reverses the Y-axis so it reads top-to-bottom alphabetically
+            fig.update_yaxes(autorange="reversed") 
+            
+            # Renders the chart beautifully inside Streamlit
+            st.plotly_chart(fig, use_container_width=True)
+            
+        except Exception as e:
+            st.error("Not enough valid date data to generate timeline yet.")
     
     col1, col2 = st.columns([2, 8])
     with col1:
