@@ -107,7 +107,8 @@ if not FEDERAL_RATES_DB:
     else:
         st.stop() 
 
-LOCATIONS_LIST = sorted(list(FEDERAL_RATES_DB.keys()))
+# Add a blank default option to force the budget section to hide on reset
+DROPDOWN_OPTIONS = ["-- Select Destination --"] + sorted(list(FEDERAL_RATES_DB.keys()))
 
 # ─── MATH, GEO, AND LIVE API UTILITIES ────────────────────────────────
 
@@ -199,7 +200,6 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
         pass
     return None
 
-
 # ─── INLINE CORE METADATA ─────────────────────────────────────────────
 
 st.markdown("---")
@@ -245,13 +245,13 @@ for i in range(st.session_state["num_legs"]):
         default_start = raw_legs_inputs[i-1]["end"] + timedelta(days=1)
 
     with l_col1:
-        leg_name = st.selectbox(f"Location", options=LOCATIONS_LIST, key=f"loc_raw_{i}_{st.session_state['form_key']}", index=0)
+        leg_name = st.selectbox(f"Location", options=DROPDOWN_OPTIONS, key=f"loc_raw_{i}_{st.session_state['form_key']}", index=0)
     with l_col2:
         leg_start = st.date_input(f"Arrival Date", default_start, key=f"start_{i}_{st.session_state['form_key']}")
     with l_col3:
         leg_end = st.date_input(f"Departure Date", default_start + timedelta(days=3), key=f"end_{i}_{st.session_state['form_key']}")
         
-    if FEDERAL_RATES_DB:
+    if FEDERAL_RATES_DB and leg_name != "-- Select Destination --":
         raw_legs_inputs.append({
             "index": i, "name": leg_name, "data": FEDERAL_RATES_DB[leg_name], "start": leg_start, "end": leg_end
         })
@@ -281,7 +281,8 @@ for idx, leg in enumerate(raw_legs_inputs):
 
 # ─── FINANCIAL CALCULATIONS AND COMPILATION ───────────────────────────
 
-if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) == st.session_state["num_legs"]:
+# Prevents budget from rendering until ALL active legs have a valid destination selected
+if date_sequencing_valid and origin_geo and FEDERAL_RATES_DB and len(legs_data) == st.session_state["num_legs"] and len(legs_data) > 0:
     st.markdown("---")
     st.subheader("3. Dynamic Budget Analysis")
     
