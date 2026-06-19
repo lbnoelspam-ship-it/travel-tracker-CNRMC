@@ -40,17 +40,17 @@ if "trip_database" not in st.session_state:
     st.session_state["trip_database"] = load_ledger()
 if "num_legs" not in st.session_state:
     st.session_state["num_legs"] = 1
+
+# The hidden counter that forces widgets to wipe clean
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
 if "show_budget" not in st.session_state:
     st.session_state["show_budget"] = False
 
 def hide_budget():
-    """Callback function: Hides budget if the user modifies any input."""
     st.session_state["show_budget"] = False
 
 def reset_estimator():
-    """Increments the form key to instantly wipe all form inputs clean."""
     st.session_state["num_legs"] = 1
     st.session_state["form_key"] += 1
     st.session_state["show_budget"] = False
@@ -184,7 +184,6 @@ AIRPORT_MAP = {
 
 @st.cache_data(ttl=86400) 
 def fetch_live_airfare(origin_name, dest_name, flight_date):
-    """The 'Loud' Google Flights API caller."""
     try:
         api_key = st.secrets.get("SERPAPI_KEY")
         if not api_key: 
@@ -195,8 +194,6 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
         d_code = dest_name if len(dest_name) == 3 and dest_name.isupper() else AIRPORT_MAP.get(dest_name, "JFK")
         
         date_str = flight_date.strftime("%Y-%m-%d") if isinstance(flight_date, date) else flight_date[:10]
-        
-        # FIXED: &type=2 added to force one-way pricing
         url = f"https://serpapi.com/search.json?engine=google_flights&departure_id={o_code}&arrival_id={d_code}&outbound_date={date_str}&type=2&currency=USD&hl=en&api_key={api_key}"
         
         res = requests.get(url)
@@ -219,10 +216,34 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
         pass
     return None
 
-# ─── INLINE CORE METADATA ─────────────────────────────────────────────
+@st.cache_data(ttl=86400)
+def get_google_driving_distance(origin: str, destination: str):
+    """Hits Google Maps Distance Matrix API for exact driving mileage."""
+    try:
+        api_key = st.secrets.get("GOOGLE_MAPS_API_KEY")
+        if not api_key:
+            return None
+            
+        safe_orig = urllib.parse.quote(origin.strip())
+        safe_dest = urllib.parse.quote(destination.strip())
+        
+        url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={safe_orig}&destinations={safe_dest}&units=imperial&key={api_key}"
+        res = requests.get(url).json()
+        
+        if res.get('status') == 'OK':
+            element = res['rows'][0]['elements'][0]
+            if element.get('status') == 'OK':
+                # Convert from meters to miles precisely
+                meters = element['distance']['value']
+                return meters / 1609.344
+    except Exception:
+        pass
+    return None
+
+# ─── INLINE CORE DATA ─────────────────────────────────────────────
 
 st.markdown("---")
-st.subheader("1. Core Metadata & Origin")
+st.subheader("1. Core Data")
 
 col_meta1, col_meta2, col_meta3 = st.columns(3)
 with col_meta1:
@@ -236,10 +257,10 @@ origin_geo = get_coordinates(origin_input)
 if origin_geo:
     st.caption(f"✔️ Origin locked: **{origin_geo['clean_name']}**")
 
-# ─── ITINERARY CONSOLE & SEAMLESS DATE TRACKER ────────────────────────
+# ─── DESTINATIONS & DATES ─────────────────────────────────────────
 
 st.markdown("---")
-st.subheader("2. Multi-Leg Destination & Dates")
+st.subheader("2. Destinations and Dates")
 st.markdown("Specify destinations chronologically. Dates must sequence perfectly with no gaps or overlaps.")
 
 col_add, col_rem, _ = st.columns([2, 2, 6])
@@ -401,8 +422,6 @@ if st.session_state.get("show_budget", False):
         
     st.markdown(f"### **Total Multi-Leg Projected Budget:** ${final_calculated_sum:,.2f}")
     
-    # ─── ACTION BUTTONS: SAVE OR CLEAR ────────────────────────────────
-    
     col_save, col_clear = st.columns([3, 7])
     
     with col_save:
@@ -440,10 +459,85 @@ if st.session_state.get("show_budget", False):
             reset_estimator()
             st.rerun()
 
+# ─── STANDALONE UTILITIES ─────────────────────────────────────────────
+
+st.markdown("---")
+st.subheader("4. Standalone Utilities")
+
+col_util1, col_util2 = st.columns(2)
+
+with col_util1:
+    st.markdown("#### 💱 Currency Converter")
+    st.caption("Powered by real-time & historical exchange APIs")
+    
+    @st.cache_data(ttl=86400)
+    def fetch_exchange_rate(base, target, fetch_date):
+        if base == target: return 1.0
+        try:
+            date_str = fetch_date.strftime("%Y-%m-%d")
+            url = f"https://api.frankfurter.app/{date_str}?from={base}&to={target}"
+            if fetch_date >= date.today():
+                url = f"https://api.frankfurter.app/latest?from={base}&to={target}"
+            res = requests.get(url).json()
+            return res["rates"][target]
+        except Exception:
+            return None
+            
+    c_amt, c_base, c_tgt = st.columns([2, 1, 1])
+    amt = c_amt.number_input("Amount", value=100.0, min_value=0.0)
+    curr_from = c_base.selectbox("From", ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "MXN", "CHF"], index=0)
+    curr_to = c_tgt.selectbox("To", ["EUR", "USD", "GBP", "JPY", "CAD", "AUD", "MXN", "CHF"], index=1)
+    
+    c_date, c_btn = st.columns([2, 1])
+    conv_date = c_date.date_input("Conversion Date", value=date.today())
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("Convert", use_container_width=True):
+        rate = fetch_exchange_rate(curr_from, curr_to, conv_date)
+        if rate:
+            st.success(f"**{amt:,.2f} {curr_from}** = **{amt * rate:,.2f} {curr_to}** (Rate: {rate})")
+        else:
+            st.error("Data unavailable for that date/currency.")
+
+with col_util2:
+    st.markdown("#### 🚗 Mileage Estimator")
+    st.caption("Federal Standard Rate: $0.725 / mile")
+    
+    m_start = st.text_input("Start Location", placeholder="e.g. Norfolk, VA", key="mileage_start")
+    m_end = st.text_input("End Location", placeholder="e.g. Washington, DC", key="mileage_end")
+    
+    m_rt, m_btn = st.columns([1, 1])
+    is_rt = m_rt.checkbox("Round Trip", value=True)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    if m_btn.button("Estimate Mileage Cost", use_container_width=True):
+        api_key = st.secrets.get("GOOGLE_MAPS_API_KEY")
+        
+        if api_key:
+            with st.spinner("Calculating exact route..."):
+                base_dist = get_google_driving_distance(m_start, m_end)
+                if base_dist is not None:
+                    total_dist = (base_dist * 2) if is_rt else base_dist
+                    cost = total_dist * 0.725
+                    st.success(f"📍 Precise Route: **{total_dist:,.1f} miles** | Cost: **${cost:,.2f}**")
+                else:
+                    st.error("Google Maps could not calculate a route. Please verify the locations.")
+        else:
+            st.warning("⚠️ GOOGLE_MAPS_API_KEY missing in Streamlit Secrets. Falling back to straight-line math.")
+            geo_start = get_coordinates(m_start)
+            geo_end = get_coordinates(m_end)
+            if geo_start and geo_end:
+                base_dist = haversine_miles(geo_start['lat'], geo_start['lon'], geo_end['lat'], geo_end['lon']) * 1.2
+                total_dist = (base_dist * 2) if is_rt else base_dist
+                cost = total_dist * 0.725
+                st.success(f"Est. Driving Distance: **{total_dist:,.1f} miles** | Cost: **${cost:,.2f}**")
+            else:
+                st.error("Could not locate coordinates for those locations.")
+
 # ─── MASTER CONSOLIDATED ACCUMULATOR LEDGER ───────────────────────────
 
 st.markdown("---")
-st.subheader("4. Centralized Travel Tracker Archive")
+st.subheader("5. Centralized Travel Tracker Archive")
 
 if st.session_state["trip_database"]:
     st.info("💡 **Interactive Ledger:** Individual line item entries. Check 'Refresh Live Airfare' and hit Save to update flight costs.")
