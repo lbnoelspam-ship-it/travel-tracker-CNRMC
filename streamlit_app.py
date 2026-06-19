@@ -182,34 +182,41 @@ AIRPORT_MAP = {
     "Houston, Texas": "IAH", "Houston, TX": "IAH"
 }
 
-@st.cache_data(ttl=86400) 
-def fetch_live_airfare(origin_name, dest_name, flight_date):
+@st.cache_data(ttl=86400)
+def get_google_driving_distance(origin: str, destination: str):
+    """Hits Google Maps Distance Matrix API and screams if it fails."""
     try:
-        api_key = st.secrets.get("SERPAPI_KEY")
-        if not api_key: 
-            st.toast("⚠️ ERROR: No API Key found in Streamlit Settings!")
+        api_key = st.secrets.get("GOOGLE_MAPS_API_KEY")
+        if not api_key:
             return None
+            
+        safe_orig = urllib.parse.quote(origin.strip())
+        safe_dest = urllib.parse.quote(destination.strip())
         
-        o_code = origin_name if len(origin_name) == 3 and origin_name.isupper() else AIRPORT_MAP.get(origin_name, "JFK")
-        d_code = dest_name if len(dest_name) == 3 and dest_name.isupper() else AIRPORT_MAP.get(dest_name, "JFK")
+        url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={safe_orig}&destinations={safe_dest}&units=imperial&key={api_key}"
+        res = requests.get(url).json()
         
-        date_str = flight_date.strftime("%Y-%m-%d") if isinstance(flight_date, date) else flight_date[:10]
-        url = f"https://serpapi.com/search.json?engine=google_flights&departure_id={o_code}&arrival_id={d_code}&outbound_date={date_str}&type=2&currency=USD&hl=en&api_key={api_key}"
-        
-        res = requests.get(url)
-        data = res.json()
-        
-        if "error" in data:
-            st.toast(f"🛑 SerpApi Error: {data['error']}")
+        # Loud Top-Level API Error Check
+        if res.get('status') != 'OK':
+            error_msg = res.get('error_message', 'No specific error provided by Google.')
+            st.toast(f"🛑 Google API Error: {res.get('status')} | {error_msg}")
             return None
+            
+        element = res['rows'][0]['elements'][0]
         
-        if "best_flights" in data and len(data["best_flights"]) > 0:
-            return float(data["best_flights"][0]["price"])
-        elif "other_flights" in data and len(data["other_flights"]) > 0:
-            return float(data["other_flights"][0]["price"])
-        else:
-            st.toast(f"🤷‍♂️ Google found no flights for {o_code} to {d_code} on {date_str}.")
+        # Loud Routing Error Check (e.g., trying to drive to Hawaii)
+        if element.get('status') != 'OK':
+            st.toast(f"🗺️ Routing Error: {element.get('status')}. (Are these connected by a road?)")
             return None
+            
+        # Convert from meters to miles precisely
+        meters = element['distance']['value']
+        return meters / 1609.344
+        
+    except Exception as e:
+        st.toast(f"💥 Code Error: {e}")
+        pass
+    return None
             
     except Exception as e:
         st.toast(f"💥 Code Error: {e}")
