@@ -216,11 +216,47 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
     return None
 
 def get_google_driving_distance(origin: str, destination: str):
-    """Hits Google Maps Distance Matrix API and screams if it fails."""
+    """Hits the modern Google Routes API for exact driving mileage."""
     try:
         api_key = st.secrets.get("GOOGLE_MAPS_API_KEY")
         if not api_key:
             return None
+            
+        url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+        
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": api_key,
+            "X-Goog-FieldMask": "routes.distanceMeters"
+        }
+        
+        payload = {
+            "origin": {"address": origin.strip()},
+            "destination": {"address": destination.strip()},
+            "travelMode": "DRIVE"
+        }
+        
+        res = requests.post(url, headers=headers, json=payload)
+        data = res.json()
+        
+        # Loud Top-Level API Error Check
+        if res.status_code != 200:
+            error_msg = data.get('error', {}).get('message', 'Unknown Error')
+            st.toast(f"🛑 Google Routes API Error: {error_msg}")
+            return None
+            
+        # Extract the exact driving distance
+        if "routes" in data and len(data["routes"]) > 0:
+            meters = data["routes"][0].get("distanceMeters", 0)
+            return meters / 1609.344 # Convert to miles
+        else:
+            st.toast("🗺️ Routing Error: No route found. (Are these connected by a road?)")
+            return None
+            
+    except Exception as e:
+        st.toast(f"💥 Code Error: {e}")
+        pass
+    return None
             
         safe_orig = urllib.parse.quote(origin.strip())
         safe_dest = urllib.parse.quote(destination.strip())
