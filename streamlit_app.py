@@ -40,8 +40,6 @@ if "trip_database" not in st.session_state:
     st.session_state["trip_database"] = load_ledger()
 if "num_legs" not in st.session_state:
     st.session_state["num_legs"] = 1
-
-# The hidden counter that forces widgets to wipe clean
 if "form_key" not in st.session_state:
     st.session_state["form_key"] = 0
 if "show_budget" not in st.session_state:
@@ -183,6 +181,7 @@ AIRPORT_MAP = {
 }
 
 def fetch_live_airfare(origin_name, dest_name, flight_date):
+    """The 'Loud' Google Flights API caller. Uncached to allow st.toast."""
     try:
         api_key = st.secrets.get("SERPAPI_KEY")
         if not api_key: 
@@ -216,7 +215,7 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
     return None
 
 def get_google_driving_distance(origin: str, destination: str):
-    """Hits the modern Google Routes API for exact driving mileage."""
+    """Hits the modern Google Routes API for exact driving mileage. Uncached to allow st.toast."""
     try:
         api_key = st.secrets.get("GOOGLE_MAPS_API_KEY")
         if not api_key:
@@ -253,34 +252,6 @@ def get_google_driving_distance(origin: str, destination: str):
             st.toast("🗺️ Routing Error: No route found. (Are these connected by a road?)")
             return None
             
-    except Exception as e:
-        st.toast(f"💥 Code Error: {e}")
-        pass
-    return None
-            
-        safe_orig = urllib.parse.quote(origin.strip())
-        safe_dest = urllib.parse.quote(destination.strip())
-        
-        url = f"https://maps.googleapis.com/maps/api/distancematrix/json?origins={safe_orig}&destinations={safe_dest}&units=imperial&key={api_key}"
-        res = requests.get(url).json()
-        
-        # Loud Top-Level API Error Check
-        if res.get('status') != 'OK':
-            error_msg = res.get('error_message', 'No specific error provided by Google.')
-            st.toast(f"🛑 Google API Error: {res.get('status')} | {error_msg}")
-            return None
-            
-        element = res['rows'][0]['elements'][0]
-        
-        # Loud Routing Error Check
-        if element.get('status') != 'OK':
-            st.toast(f"🗺️ Routing Error: {element.get('status')}. (Are these connected by a road?)")
-            return None
-            
-        # Convert from meters to miles precisely
-        meters = element['distance']['value']
-        return meters / 1609.344
-        
     except Exception as e:
         st.toast(f"💥 Code Error: {e}")
         pass
