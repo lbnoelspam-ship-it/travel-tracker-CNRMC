@@ -182,7 +182,6 @@ AIRPORT_MAP = {
     "Houston, Texas": "IAH", "Houston, TX": "IAH"
 }
 
-@st.cache_data(ttl=86400) 
 def fetch_live_airfare(origin_name, dest_name, flight_date):
     try:
         api_key = st.secrets.get("SERPAPI_KEY")
@@ -216,7 +215,6 @@ def fetch_live_airfare(origin_name, dest_name, flight_date):
         pass
     return None
 
-@st.cache_data(ttl=86400)
 def get_google_driving_distance(origin: str, destination: str):
     """Hits Google Maps Distance Matrix API and screams if it fails."""
     try:
